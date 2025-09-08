@@ -145,14 +145,22 @@ addEducation()
 
 import tempfile
 import os
+import platform
 import subprocess
 
 with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as tmp_file:
     doc.save(tmp_file.name)
     temp_path = tmp_file.name
 
+system = platform.system()
+if system == "Darwin":
+    LIBREOFFICE_PATH='/Applications/LibreOffice.app/Contents/MacOS/soffice'
+elif system == "Linux":
+    LIBREOFFICE_PATH='libreoffice'
+else:
+    print("Error: Windows docx to pdf conversion not implemented.")
+    exit
 
-LIBREOFFICE_PATH='/Applications/LibreOffice.app/Contents/MacOS/soffice'
 subprocess.run([
     LIBREOFFICE_PATH, '--headless', '--convert-to', 'pdf',
     '--outdir', os.path.dirname(temp_path), temp_path
