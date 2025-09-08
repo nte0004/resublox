@@ -159,7 +159,7 @@ elif system == "Linux":
     LIBREOFFICE_PATH='libreoffice'
 else:
     print("Error: Windows docx to pdf conversion not implemented.")
-    exit
+    exit(1)
 
 subprocess.run([
     LIBREOFFICE_PATH, '--headless', '--convert-to', 'pdf',
