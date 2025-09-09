@@ -83,8 +83,10 @@ education:
   location: City, State
   degree: Bachelor of Science
   major: Computer Science
-  concentration: Software Engineering
-  graduated: "May 2020"
+  concentration: Cybersecurity
+  graduation:
+    "on": "May 2020"
+    hasGraduated: true
   gpa: "3.7/4.0"
   honors: [Magna Cum Laude, "Dean's List (Fall '19, Spring '20)"]
-  relevant_courses: [Data Structures, Algorithms, Database Systems, Software Engineering, Web Development, Computer Networks]
+  courses: [Data Structures, Algorithms, Database Systems, Software Engineering, Web Development, Computer Networks]
