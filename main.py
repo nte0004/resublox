@@ -7,6 +7,7 @@ with open(TEMPLATE_PATH, 'r') as file:
 
 from docx import Document
 from docx.shared import Inches, Pt
+import math
 
 class FontSize:
     NAME = 13
@@ -20,25 +21,85 @@ class Spacing:
 
 doc = Document()
 
+PAGE_WIDTH_INCHES = 8.5
+PAGE_HEIGHT_INCHES = 11
+MARGIN_INCHES = [1, 1, 1, 1]
+FONT_PATH = 'fonts/arial/arial.ttf'
+MAX_PAGES = 1
+
+from fontTools.ttLib import TTFont
+
+font = TTFont(FONT_PATH)
+cmap = font.getBestCmap()
+hmtx = font['hmtx']
+unitsPerEm = font['head'].unitsPerEm
+maxWidthInches = PAGE_WIDTH_INCHES - MARGIN_INCHES[1] - MARGIN_INCHES[3]
+
+hhea = font['hhea']
+nativeFontHeightUnits = hhea.ascender - hhea.descender + hhea.lineGap
+maxHeightInches = (PAGE_HEIGHT_INCHES - MARGIN_INCHES[0] - MARGIN_INCHES[2]) * MAX_PAGES
+totalHeightInches = 0
+
+def checkBounds(text, fontSize, lineHeight = 1.15):
+    global totalHeightInches, maxWidthInches, maxHeightInches, hmtx, unitsPerEm
+
+    totalWidth = 0
+    for char in text:
+        glyphName = cmap.get(ord(char))
+        if glyphName:
+            width, _ = hmtx[glyphName]
+            totalWidth += width
+    
+    widthPts = (totalWidth * fontSize) / unitsPerEm
+    widthInches = widthPts / 72
+
+    if widthInches > maxWidthInches:
+        print(f"WARNING: This line will wrap: '{text}'")
+
+    heightPts = (nativeFontHeightUnits * fontSize * lineHeight) / unitsPerEm
+    heightInches = heightPts / 72
+
+    lines = math.ceil(widthInches / maxWidthInches) or 1
+
+    totalHeightInches += heightInches * lines
+
+    if totalHeightInches > maxHeightInches:
+        print(f"WARNING: This line will overflow into a new page: '{text}'")
+
 # Page Setup
 def setupPage():
+    global doc
+
     section = doc.sections[0]
-    section.page_width = Inches(8.5)
-    section.page_height = Inches(11)
-    section.top_margin = Inches(1)
-    section.right_margin = Inches(1)
-    section.bottom_margin = Inches(1)
-    section.left_margin = Inches(1)
+    section.page_width = Inches(PAGE_WIDTH_INCHES)
+    section.page_height = Inches(PAGE_HEIGHT_INCHES)
+    section.top_margin = Inches(MARGIN_INCHES[0])
+    section.right_margin = Inches(MARGIN_INCHES[1])
+    section.bottom_margin = Inches(MARGIN_INCHES[2])
+    section.left_margin = Inches(MARGIN_INCHES[3])
 
 def insert(text, size = FontSize.REGULAR):
+    global doc
+
+    checkBounds(text, size)
+
     insertion = doc.add_paragraph()
     run = insertion.add_run(text)
+    run.font.name = 'Arial'
     run.font.size = Pt(size)
 
     insertion.paragraph_format.space_after = Pt(0)
     insertion.paragraph_format.space_before = Pt(0)
 
 def insertGap(space=Spacing.GAP):
+    global doc, totalHeightInches
+
+    spaceInches = space / 72
+    totalHeightInches += spaceInches
+    
+    if totalHeightInches > maxHeightInches:
+        print(f"WARNING: Space gap will overflow into new page: {space}pt")
+
     insertion = doc.add_paragraph()
     insertion.paragraph_format.space_after = Pt(space)
     insertion.paragraph_format.space_before = Pt(0)
@@ -54,6 +115,8 @@ def combine(texts, seperator):
     return line
 
 def addContact():
+    global content
+
     c = content['contact']
     insert(c['name'], FontSize.NAME)
 
@@ -65,6 +128,8 @@ def addContact():
 
 
 def addSkills():
+    global content
+
     s = content['skills']
     insert(s['title'], FontSize.TITLE)
     skills = combine(s['list'], ', ')
@@ -87,6 +152,8 @@ def addSection(section):
         insert(linkLine)
 
 def addExperience():
+    global content
+
     e = content['experience']
     insert(e['title'], FontSize.TITLE)
     for job in e['jobs']:
@@ -106,6 +173,8 @@ def addExperience():
         addSection(job['sections'][-1])
 
 def addEducation():
+    global content
+
     e = content['education']
     insert(e['title'], FontSize.TITLE)
     
