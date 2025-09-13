@@ -8,6 +8,7 @@ import os
 import platform
 import subprocess
 from dataclasses import dataclass
+from sentence_transformers import SentenceTransformer
 
 class FontSize:
     NAME = 13
