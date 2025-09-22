@@ -4,18 +4,114 @@ from pathlib import Path
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+from fontTools.ttLib import TTFont
+from dataclasses import dataclass, field
+from enum import Enum
+import math
+from typing import List, Tuple, Dict, Any
+
+@dataclass
+class FontInfo:
+    name: str
+    path: str
+    unitsPerEm: int
+    fontHeightUnits: int
+    fontAvgWidthUnits: int
+
+class Fonts:
+    # Values found with fontHelper.py
+    ARIAL = FontInfo(
+        name = 'arial',
+        path = 'fonts/arial/arial.ttf',
+        unitsPerEm = 2048,
+        fontHeightUnits = 2355,
+        fontAvgWidthUnits = 1079
+    )
+
+FONT = Fonts.ARIAL
+LINE_HEIGHT = 1.15
+
+@dataclass
+class SizeInfo:
+    size: float
+    heightPt: float = field(init=False)
+    heightInch: float = field(init=False)
+
+    def __post_init__(self):
+        self.heightPt = (FONT.fontHeightUnits * self.size * LINE_HEIGHT) / FONT.unitsPerEm
+        self.heightInch = self.heightPt / 72
+
+
+class FontSize:
+    NAME = SizeInfo(13)
+    REGULAR = SizeInfo(10)
+    TITLE = SizeInfo(12)
+    SUBTITLE = SizeInfo(11)
+
+class Spacing:
+    GAP = SizeInfo(6)
+    GAP_SMALL = SizeInfo(3)
+
 class Models:
     SMALL = './models/all-MiniLM-L6-v2'
     MEDIUM = './models/all-MiniLM-L12-v2'
     LARGE = './models/all-mpnet-base-v2'
 
 MODEL = Models.SMALL
+
 TEMPLATE_PATH='template.example.yaml'
+
+
+PAGE_WIDTH_INCHES = 8.5
+PAGE_HEIGHT_INCHES = 11
+MARGIN_INCHES = [1, 1, 1, 1]
+MAX_PAGES = 1
 
 # TODO: Take user input of job posting
 JOB_POSTING = """
 TechFlow Solutions is a fast-growing fintech startup revolutionizing how small businesses manage their cash flow. We're backed by top-tier VCs and serving over 10,000 customers across North America. Join our mission to democratize financial tools for entrepreneurs everywhere. We're seeking a Senior Software Engineer to join our core platform team. You'll work on high-impact features that directly serve our customers, from building intuitive dashboards to architecting scalable backend systems. This is a chance to wear multiple hats and make a real difference in a collaborative, fast-paced environment. Design and implement full-stack features using React, Node.js, and PostgreSQL. Collaborate with product managers and designers to translate requirements into elegant solutions. Write clean, testable code and participate in code reviews. Optimize application performance and ensure scalability. Mentor junior developers and contribute to technical decision-making. Work with our DevOps team to maintain CI/CD pipelines and AWS infrastructure. 4+ years of software development experience. Strong proficiency in JavaScript/TypeScript and modern React. Experience with Node.js and RESTful API design. Familiarity with SQL databases (PostgreSQL preferred). Understanding of version control (Git) and agile development practices. Excellent communication skills and collaborative mindset. Experience with AWS services (EC2, RDS, Lambda). Knowledge of Docker and containerization. Background in fintech or financial services. Experience with testing frameworks (Jest, Cypress). Familiarity with GraphQL.
 """
+class FontMetrics:
+    def __init__(self, font_path: str):
+        self.font = TTFont(font_path)
+        self.cmap = self.font.getBestCmap()
+        self.hmtx = self.font['hmtx']
+        self.maxWidthInches = PAGE_WIDTH_INCHES - MARGIN_INCHES[1] - MARGIN_INCHES[3]
+        
+    def getLineWeight(self, text: str, size: SizeInfo) -> float:
+        if not text.strip():  # Empty or whitespace-only text
+            return size.size / 72  # Just spacing
+            
+        totalWidth = 0
+        for char in text:
+            glyph_name = self.cmap.get(ord(char))
+            if glyph_name:
+                width, _ = self.hmtx[glyph_name]
+                totalWidth += width
+            else:
+                totalWidth += FONT.fontAvgWidthUnits
+        
+        widthPts = (totalWidth * size.size) / FONT.unitsPerEm
+        widthInches = widthPts / 72
+        lineCount = math.ceil(widthInches / self.maxWidthInches)
+        
+        return size.heightInch * lineCount
+
+FONT_METRICS = FontMetrics(FONT.path)
+
+class ItemType(Enum):
+    SKILL = 0
+    POINT = 1
+    KEYWORD = 2
+    JOB_POSTING = 3
+
+@dataclass
+class ProcessedItem:
+    text: str
+    index: int
+    lineWeight: float
+    itemType: ItemType
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 def loadYAML(path):
     try:
@@ -40,152 +136,323 @@ def loadYAML(path):
         print(f"Error loading YAML: {e}")
         return None
 
+def combine(texts, seperator):
+    line = ""
+    for text in texts[:-1]:
+        line += text
+        line += seperator
+    line += texts[-1];
+
+    return line
+
+def generateRequiredLines(content):
+    lines = []
+
+    # Contact Info
+    c = content['contact']
+    lines.append((c['name'], FontSize.NAME))
+    lines.append((f"Email: {c['email']} | Phone: {c['phone']} | {c['location']}", FontSize.REGULAR))
+    lines.append((f"Github: {c['github']} | Website: {c['website']}", FontSize.REGULAR))
+
+    # Gap
+    lines.append(('', Spacing.GAP))
+
+    # Skills
+    s = content['skills']
+    lines.append((s['title'], FontSize.TITLE))
+
+    # Gap
+    lines.append(('', Spacing.GAP))
+
+    # Experience
+    e = content['experience']
+    lines.append((e['title'], FontSize.TITLE))
+    job = e['jobs'][0]
+
+    lines.append((job['role'], FontSize.REGULAR))
+    lines.append((job['company'], FontSize.REGULAR))
+    lines.append((job['location'], FontSize.REGULAR))
+
+    timeRange = combine([job['from'], job['to']], ' \u2014 ') # Em Dash
+    lines.append((timeRange, FontSize.REGULAR))
+
+    lines.append(('', Spacing.GAP_SMALL))
+
+    # Gap
+    lines.append(('', Spacing.GAP))
+    
+    # Education
+    e = content['education']
+    lines.append((e['title'], FontSize.TITLE))
+    
+    degree = f"{e['degree']} in {e['major']}"
+    lines.append((degree, FontSize.REGULAR))
+
+    conc = e.get('concentration', None)
+    if conc:
+        lines.append((f"Concentration in {conc}", FontSize.REGULAR))
+
+    school = f"{e['school']}, {e['location']}"
+    lines.append((school, FontSize.REGULAR))
+
+    grad = e.get('graduation', None)
+    if grad:
+        if grad['hasGraduated']:
+            gradLine = f"Graduated: {grad['on']}"
+        else:
+            gradLine = f"Expected Graduation: {grad['on']}"
+            lines.append((gradLine, FontSize.REGULAR))
+
+    lines.append((f"GPA: {e['gpa']}", FontSize.REGULAR))
+
+    honorsList = combine(e['honors'], ', ')
+    lines.append((f"Honors: {honorsList}", FontSize.REGULAR))
+
+    courseList = combine(e['courses'], ', ')
+    lines.append((f"Relevant Courses: {courseList}", FontSize.REGULAR))
+
+    return lines
+
 def makeBatch(content):
     batchIn = []
-    batchMap = {'skills': None, 'jobs': [], 'jobPosting': None}
+    processedItems = []
     rootIdx = 0
 
-    skills = content['skills']['list']
-    if (skills):
-        skillsStart = rootIdx
-        for s in skills:
-            batchIn.append(s)
-            rootIdx += 1
+    #skills = content['skills']['list']
+    #if (skills): 
+    #    for s in skills:
+    #        lineWeight = FONT_METRICS.getLineWeight(s, FontSize.REGULAR)
+    #        batchIn.append(s)
+    #        processedItems.append(ProcessedItem(
+    #            text = s,
+    #            index = rootIdx,
+    #            lineWeight = lineWeight,
+    #            itemType = ItemType.SKILL
+    #        ))
 
-        skillsEnd = rootIdx - 1
+    #        rootIdx += 1
 
-        batchMap['skills'] = {'start': skillsStart, 'end': skillsEnd}
-
-    e = content['experience']
-    jobs = e['jobs']
-    for j in jobs:
-        sections = j['sections']
-        sectionsMap = []
-        
-        jobStart = rootIdx
-        
-        for s in sections:
-            sectionStart = rootIdx
-            points = s['points']
-            
-            for p in points:
+    jobs = content['experience']['jobs']
+    for jIdx ,j in enumerate(jobs):
+        for sIdx, s in enumerate(j['sections']):
+            for pIdx, p in enumerate(s['points']):
+                lineWeight = FONT_METRICS.getLineWeight(p, FontSize.REGULAR)
                 batchIn.append(p)
+                processedItems.append(ProcessedItem(
+                    text = p,
+                    index = rootIdx,
+                    lineWeight = lineWeight,
+                    itemType = ItemType.POINT,
+                    metadata = {
+                        'jobIndex': jIdx,
+                        'sectionIndex': sIdx,
+                        'pointIndex': pIdx
+                    }
+                ))
                 rootIdx += 1
 
-            sectionEnd = rootIdx - 1
-
-            keywordsStart = rootIdx
-            keywords = s['keywords']
-            
-            for k in keywords:
+            for kIdx, k in enumerate(s['keywords']):
+                lineWeight = FONT_METRICS.getLineWeight(k, FontSize.REGULAR)
                 batchIn.append(k)
+                processedItems.append(ProcessedItem(
+                    text = k,
+                    index = rootIdx,
+                    lineWeight = lineWeight,
+                    itemType = ItemType.KEYWORD,
+                    metadata = {
+                        'jobIndex': jIdx,
+                        'sectionIndex': sIdx,
+                        'keywordIndex': kIdx
+                    }
+                ))
                 rootIdx += 1
-
-            keywordsEnd = rootIdx - 1
-
-            composite = ' '.join(points + keywords)
-            batchIn.append(composite)
-            compositeIdx = rootIdx
-            
-            rootIdx += 1
-
-            sectionsMap.append({
-                'start': sectionStart,
-                'end': sectionEnd, 
-                'keywords': {'start': keywordsStart, 'end': keywordsEnd},
-                'composite': compositeIdx})
-
-        jobEnd = rootIdx - 1
-        batchMap['jobs'].append({'start': jobStart, 'end': jobEnd, 'sections': sectionsMap})
 
     batchIn.append(JOB_POSTING)
-    batchMap['jobPosting'] = {'start': rootIdx, 'end': rootIdx}
+    processedItems.append(ProcessedItem(
+        text = JOB_POSTING,
+        index = rootIdx,
+        lineWeight = 0,
+        itemType = ItemType.JOB_POSTING
+    ))
 
-    return batchIn, batchMap
+    return batchIn, processedItems
 
+def getRequiredLineWeights(lines):
+    maxHeightInches = (PAGE_HEIGHT_INCHES - MARGIN_INCHES[0] - MARGIN_INCHES[2]) * MAX_PAGES
+    totalHeight = sum(FONT_METRICS.getLineWeight(text, size) for text, size in lines)
+    remainingHeight = max(maxHeightInches - totalHeight, 0)
+    
+    return totalHeight, remainingHeight
 
 def encode(batch):
     model = SentenceTransformer(MODEL)
     return model.encode(batch)
 
-def analyze(batchMap, embeddings):
-    results = {'skills': [], 'jobs': []}
+def analyze(processedItems, embeddings):
+    # NOTE: Maybe iterate in reverse since jobPosting is the last thing appended
+    jobPostingItem = next(item for item in processedItems if item.itemType == ItemType.JOB_POSTING)
+    jobPostingEmbedding = embeddings[jobPostingItem.index].reshape(1, -1)
+
+    similarities = cosine_similarity(embeddings, jobPostingEmbedding).flatten()
     
-    job_posting_idx = batchMap['jobPosting']['start']
-    job_posting_embedding = embeddings[job_posting_idx].reshape(1, -1)
+    return similarities.tolist()
 
-    skills_start = batchMap['skills']['start']
-    skills_end = batchMap['skills']['end']
-    skills_embeddings = embeddings[skills_start:skills_end+1]
+def knapsack(values, weights, capacity):
+    n = len(values)
+    if n != len(weights):
+        print("Every value must have a weight")
+        exit()
 
-    skills_similarities = cosine_similarity(skills_embeddings, job_posting_embedding).flatten()
+    intCapacity = int(capacity)
+    intWeights = [int(w) for w in weights]
 
-    skills_results = []
-    for i, _ in enumerate(range(skills_start, skills_end + 1)):
-        skills_results.append({
-            'skill_index': i,
-            'similarity': float(skills_similarities[i]),
-        })
+    table = np.zeros((n + 1, intCapacity + 1), dtype=np.float32)
 
-    skills_results.sort(key=lambda x: x['similarity'], reverse=True)
+    for i in range(1, n + 1):
+        for w in range (1, intCapacity + 1):
+            if intWeights[i - 1] <= w:
+                table[i][w] = max(
+                    values[i - 1] + table[i - 1][w - intWeights[i - 1]],
+                    table[i - 1][w]
+                )
+            else:
+                table[i][w] = table[i - 1][w]
+
+    selected = [False] * n
+    w = intCapacity
+    for i in range(n, 0, -1):
+        if table[i][w] != table[i - 1][w]:
+            selected[i - 1] = True
+            w -= weights[i - 1]
+
+    return selected
+
+def getLineOverhead(fontSize = FontSize.REGULAR):
+    lineHeight = fontSize.heightInch
     
-    results['skills'] = skills_results
+    jobOverheadHeight = FontSize.TITLE.heightInch + 4 * FontSize.REGULAR.heightInch + Spacing.GAP_SMALL.heightInch
+    jobOverheadLines = math.ceil(jobOverheadHeight / lineHeight)
+    
+    sectionOverheadHeight = (FontSize.SUBTITLE.heightInch + Spacing.GAP_SMALL.heightInch)
+    sectionOverheadLines = math.ceil(sectionOverheadHeight / lineHeight)
+    
+    return jobOverheadLines, sectionOverheadLines
 
-    for job_idx, job in enumerate(batchMap['jobs']):
-        job_result = {
-            'job_index': job_idx,
-            'job_range': f"{job['start']}-{job['end']}",
-            'sections': []
-        }
-        
-        for section_idx, section in enumerate(job['sections']):
-            section_start = section['start']
-            section_end = section['end']
-            section_embeddings = embeddings[section_start:section_end+1]
-            
-            composite_idx = section['composite']
-            composite_embedding = embeddings[composite_idx].reshape(1, -1)
-            
-            keywords_similarities = []
-            keywords_results = []
-            if 'keywords' in section:
-                keywords_start = section['keywords']['start']
-                keywords_end = section['keywords']['end']
-                keywords_embeddings = embeddings[keywords_start:keywords_end+1]
-                keywords_similarities = cosine_similarity(keywords_embeddings, job_posting_embedding).flatten()
-                
-                for i, _ in enumerate(range(keywords_start, keywords_end + 1)):
-                    keywords_results.append({
-                        'keyword_index': i,
-                        'similarity': float(keywords_similarities[i]),
-                    })
-                
-                keywords_results.sort(key=lambda x: x['similarity'], reverse=True)
-            
-            section_similarities = cosine_similarity(section_embeddings, job_posting_embedding).flatten()
-            composite_similarity = cosine_similarity(composite_embedding, job_posting_embedding)[0][0]
-            
-            section_result = {
-                'section_index': section_idx,
-                'composite_similarity': float(composite_similarity),
-                'keywords': keywords_results,
-                'points': []
-            }
-            
-            for i, _ in enumerate(range(section_start, section_end + 1)):
-                section_result['points'].append({
-                    'point_index': i,
-                    'similarity': float(section_similarities[i]),
-                })
-            
-            section_result['points'].sort(key=lambda x: x['similarity'], reverse=True)
-            
-            job_result['sections'].append(section_result)
-        
-        # Keep Sections in inputted order
-        results['jobs'].append(job_result)
+def getDistinctionsFromChosen(items, chosen):
+    jobs = set()
+    sections = set()
 
-    return results
+    for i, picked in enumerate(chosen):
+        if picked:
+            item = items[i]
+            jobIdx = item.metadata['jobIndex']
+            sectionIdx = item.metadata['sectionIndex']
+
+            jobs.add(jobIdx)
+            sections.add(sectionIdx)
+
+    return jobs, sections
+
+def prune(items, similarities, itemType, heightRemaining):
+    jobOverhead, sectionOverhead = getLineOverhead()
+
+    def iterate(_capacity, maxIterations = 10):
+        if _capacity <= 0:
+            return [False] * len(targetValues)
+
+        if all(twl == targetLineWeights[0] for twl in targetLineWeights):
+            sortedTargets = sorted(range(len(targetValues)), key = lambda i: targetValues[i], reverse = True)
+            chosen = [False] * len(targetValues)
+            for i in sortedTargets[:_capacity]:
+                chosen[i] = True
+        else:
+            chosen = knapsack(targetValues, targetWeights, _capacity)
+
+        return chosen
+
+    targets = [item for item in items if item.itemType == itemType]
+    targetValues = [similarities[item.index] for item in targets]
+    targetWeights = [item.lineWeight for item in targets]
+    
+    lineHeight = FontSize.REGULAR.heightInch
+    targetLineWeights = [(math.ceil(tw / lineHeight)) for tw in targetWeights]
+
+    capacity = math.floor(heightRemaining / lineHeight)
+
+    print(f"Available space: {capacity} lines")
+    print(f"Total job points available: {len(targets)}")
+
+    accountedJobs = set()
+    accountedSections = set()
+    curCapacity = capacity
+    iteration = 0
+    maxIterations = 10
+    
+    print(f"Starting optimization with capacity: {curCapacity} lines")
+    while iteration < maxIterations:
+        iteration += 1
+
+        chosen = iterate(curCapacity)
+
+        distinctJobs, distinctSections = getDistinctionsFromChosen(items, chosen)
+
+        newJobs = distinctJobs - accountedJobs
+        removedJobs = accountedJobs - distinctJobs
+        newSections = distinctSections - accountedSections
+        removedSections = accountedSections - distinctSections
+
+        newOverhead = jobOverhead * len(newJobs) + sectionOverhead * len(newSections)
+        removedOverhead = jobOverhead * len(removedJobs) + sectionOverhead * len(removedSections)
+
+        netOverheadChange = newOverhead - removedOverhead
+        
+        print(f"Iteration {iteration}:")
+        print(f"  Current capacity: {curCapacity} lines")
+        print(f"  Selected: {sum(chosen)} points from {len(distinctJobs)} jobs, {len(distinctSections)} sections")
+        print(f"  New jobs: {len(newJobs)}, Removed jobs: {len(removedJobs)}")
+        print(f"  New sections: {len(newSections)}, Removed sections: {len(removedSections)}")
+        print(f"  Overhead change: +{newOverhead} -{removedOverhead} = {netOverheadChange} lines")
+        
+        if netOverheadChange == 0:
+            break
+        elif netOverheadChange > 0:
+            curCapacity -= netOverheadChange
+            if curCapacity <= 0:
+                chosen = [False] * len(items)
+                distinctJobs, distinctSection = set(), set()
+                break
+        else:
+            # Increase capacity when netOverheadChange is negative
+            curCapacity -= netOverheadChange
+        
+        accountedJobs = distinctJobs.copy()
+        accountedSections = distinctSections.copy()
+
+        if abs(netOverheadChange) < 2:
+            break
+
+    print(f"\nOptimization completed in {iteration} iterations")
+
+    cnt = 0
+    ocnt = 0
+    sumIn = 0
+    sumOut = 0
+    for i, picked in enumerate(chosen):
+        if picked:
+            cnt += 1
+            sumIn += targetValues[i]
+            print(f"{cnt}. {targets[i].text}")
+        else:
+            ocnt += 1
+            sumOut += targetValues[i]
+
+    Iavg = sumIn / (cnt)
+    Oavg = sumOut / (ocnt)
+
+    print(f"In Average: {Iavg}")
+    print(f"Out Average: {Oavg}")
+
+    return chosen, accountedJobs, accountedSections
 
 if __name__ == "__main__":
     content = loadYAML(TEMPLATE_PATH)
@@ -196,12 +463,22 @@ if __name__ == "__main__":
         print(f"YAML loaded, but there was nothing to work with. Exiting")
         exit()
 
+    requiredLines = generateRequiredLines(content)
+
+    heightUsed, heightRemaining = getRequiredLineWeights(requiredLines)
+
+    if (heightRemaining <= 0):
+        # NOTE: This check misses that fact that remainingHeight may be less than the height of a single line
+        print("The required content takes up all the space!")
+        exit()
+
     # TODO: Something to validate the YAML structure that must exist, does exist.
-    batchIn, batchMap = makeBatch(content)
+    batchIn, processedItems = makeBatch(content)
 
     print("Encoding data... this may take a while.")
+    
     embeddings = encode(batchIn)
+    
+    similarities = analyze(processedItems, embeddings)
 
-    analysis = analyze(batchMap, embeddings)
-
-    # TODO: Reformat content based on analysis, then pass to main.py
+    chosen, jobs, sections = prune(processedItems, similarities, ItemType.POINT, heightRemaining)
