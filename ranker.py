@@ -78,10 +78,7 @@ class FontMetrics:
         self.hmtx = self.font['hmtx']
         self.maxWidthInches = PAGE_WIDTH_INCHES - MARGIN_INCHES[1] - MARGIN_INCHES[3]
         
-    def getLineWeight(self, text: str, size: SizeInfo) -> float:
-        if not text.strip():  # Empty or whitespace-only text
-            return size.size / 72  # Just spacing
-            
+    def getWidth(self, text: str):
         totalWidth = 0
         for char in text:
             glyph_name = self.cmap.get(ord(char))
@@ -90,12 +87,26 @@ class FontMetrics:
                 totalWidth += width
             else:
                 totalWidth += FONT.fontAvgWidthUnits
+        return totalWidth
+
+    def getLineWeight(self, text: str, size: SizeInfo) -> float:
+        if not text.strip():  # Empty or whitespace-only text
+            return size.size / 72  # Just spacing
+            
+        totalWidth = self.getWidth(text)
         
         widthPts = (totalWidth * size.size) / FONT.unitsPerEm
         widthInches = widthPts / 72
         lineCount = math.ceil(widthInches / self.maxWidthInches)
         
         return size.heightInch * lineCount
+
+    def getWordWeight(self, text: str, size: SizeInfo) -> float:
+        totalWidth = self.getWidth(text)
+        widthPts = (totalWidth * size.size) / FONT.unitsPerEm
+        widthInches = widthPts / 72
+
+        return widthInches
 
 FONT_METRICS = FontMetrics(FONT.path)
 
@@ -109,7 +120,8 @@ class ItemType(Enum):
 class ProcessedItem:
     text: str
     index: int
-    lineWeight: float
+    lineWeight: float|None
+    wordWeight: float|None
     itemType: ItemType
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -242,6 +254,7 @@ def makeBatch(content):
                     text = p,
                     index = rootIdx,
                     lineWeight = lineWeight,
+                    wordWeight = None,
                     itemType = ItemType.POINT,
                     metadata = {
                         'jobIndex': jIdx,
@@ -252,12 +265,13 @@ def makeBatch(content):
                 rootIdx += 1
 
             for kIdx, k in enumerate(s['keywords']):
-                lineWeight = FONT_METRICS.getLineWeight(k, FontSize.REGULAR)
+                wordWeight = FONT_METRICS.getWordWeight(k, FontSize.REGULAR)
                 batchIn.append(k)
                 processedItems.append(ProcessedItem(
                     text = k,
                     index = rootIdx,
-                    lineWeight = lineWeight,
+                    lineWeight = None,
+                    wordWeight = wordWeight,
                     itemType = ItemType.KEYWORD,
                     metadata = {
                         'jobIndex': jIdx,
@@ -271,7 +285,8 @@ def makeBatch(content):
     processedItems.append(ProcessedItem(
         text = JOB_POSTING,
         index = rootIdx,
-        lineWeight = 0,
+        lineWeight = None,
+        wordWeight = None,
         itemType = ItemType.JOB_POSTING
     ))
 
@@ -353,7 +368,7 @@ def getDistinctionsFromChosen(items, chosen):
 
     return jobs, sections
 
-def prune(items, similarities, itemType, heightRemaining):
+def prunePoints(items, similarities, heightRemaining):
     jobOverhead, sectionOverhead = getLineOverhead()
 
     def iterate(_capacity, maxIterations = 10):
@@ -370,7 +385,7 @@ def prune(items, similarities, itemType, heightRemaining):
 
         return chosen
 
-    targets = [item for item in items if item.itemType == itemType]
+    targets = [item for item in items if item.itemType == ItemType.POINT]
     targetValues = [similarities[item.index] for item in targets]
     targetWeights = [item.lineWeight for item in targets]
     
@@ -419,7 +434,7 @@ def prune(items, similarities, itemType, heightRemaining):
             curCapacity -= netOverheadChange
             if curCapacity <= 0:
                 chosen = [False] * len(items)
-                distinctJobs, distinctSection = set(), set()
+                distinctJobs, distinctSections = set(), set()
                 break
         else:
             # Increase capacity when netOverheadChange is negative
@@ -454,6 +469,44 @@ def prune(items, similarities, itemType, heightRemaining):
 
     return chosen, accountedJobs, accountedSections
 
+
+def pruneKeywords(items, similarities, sections, maxLines = 1):
+    SCALE_FACTOR = 100
+
+    keywords = [item for item in items if item.itemType == ItemType.KEYWORD]
+
+    if not keywords:
+        return []
+
+    header = "Technologies Used: "
+    seperator = ", "
+
+    headerWeight = FONT_METRICS.getWordWeight(header, FontSize.REGULAR)
+    seperatorWeight = FONT_METRICS.getWordWeight(seperator, FontSize.REGULAR)
+    constWeight = FONT_METRICS.maxWidthInches * maxLines - headerWeight
+
+    keepers = []
+    for sectionIdx in sections:
+        sectionKeywords = [k for k in keywords if k.metadata['sectionIndex'] == sectionIdx]
+        
+        skValues = [similarities[sk.index] for sk in sectionKeywords]
+        skWeights = [int(sk.wordWeight * SCALE_FACTOR) for sk in sectionKeywords]
+        
+        availableSpace = constWeight - (len(keywords) - 1) * seperatorWeight
+        if availableSpace <= 0:
+            return []
+
+        capacity = int(availableSpace * SCALE_FACTOR)
+
+        chosen = knapsack(skValues, skWeights, capacity)
+
+        for i, picked in enumerate(chosen):
+            if picked:
+                keepers.append(sectionKeywords[i])
+
+    return keepers
+
+
 if __name__ == "__main__":
     content = loadYAML(TEMPLATE_PATH)
 
@@ -481,4 +534,17 @@ if __name__ == "__main__":
     
     similarities = analyze(processedItems, embeddings)
 
-    chosen, jobs, sections = prune(processedItems, similarities, ItemType.POINT, heightRemaining)
+    # TODO: prune skills, and prune keywords with traditional knapsack. Need height remaining out of prior pruning.
+    # Account for keywords and skills being seperated with ", ". Then subtract that from the max_width as capacity.
+    # Can turn weight and capacity into integers by multiplying by 100, then correcting afterwards. For pruning these
+    # we can pass a maxLines which will be determined by the height remaining, should be at least 1 though.
+
+    # TODO: just pass what you're pruning instead of all of the items
+    points, jobs, sections = prunePoints(processedItems, similarities, heightRemaining)
+
+    print(jobs)
+    print(sections)
+
+    keywords = pruneKeywords(processedItems, similarities, sections, 1)
+    for k in keywords:
+        print(k)
