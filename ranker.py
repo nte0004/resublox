@@ -30,16 +30,19 @@ class Fonts:
 
 FONT = Fonts.ARIAL
 LINE_HEIGHT = 1.15
+SCALE_FACTOR = 100
 
 @dataclass
 class SizeInfo:
     size: float
     heightPt: float = field(init=False)
     heightInch: float = field(init=False)
+    height: int = field(init=False)
 
     def __post_init__(self):
         self.heightPt = (FONT.fontHeightUnits * self.size * LINE_HEIGHT) / FONT.unitsPerEm
-        self.heightInch = self.heightPt / 72
+        self.heightInch = (self.heightPt / 72)
+        self.height = int(self.heightInch * SCALE_FACTOR)
 
 
 class FontSize:
@@ -61,11 +64,17 @@ MODEL = Models.SMALL
 
 TEMPLATE_PATH='template.example.yaml'
 
-
 PAGE_WIDTH_INCHES = 8.5
+PAGE_WIDTH = int(PAGE_WIDTH_INCHES * SCALE_FACTOR)
+
 PAGE_HEIGHT_INCHES = 11
+PAGE_HEIGHT = int(PAGE_HEIGHT_INCHES * SCALE_FACTOR)
+
 MARGIN_INCHES = [1, 1, 1, 1]
+MARGIN = [int(m * SCALE_FACTOR) for m in MARGIN_INCHES]
+
 MAX_PAGES = 1
+
 
 # TODO: Take user input of job posting
 JOB_POSTING = """
@@ -77,8 +86,12 @@ class FontMetrics:
         self.cmap = self.font.getBestCmap()
         self.hmtx = self.font['hmtx']
         self.maxWidthInches = PAGE_WIDTH_INCHES - MARGIN_INCHES[1] - MARGIN_INCHES[3]
+        self.maxWidth = PAGE_WIDTH - MARGIN[1] - MARGIN[3]
         
-    def getWidth(self, text: str):
+    def getWidth(self, text: str, size: SizeInfo) -> int:
+        """ Returns the width a string will consume.
+            Does not account for line-wrapping.
+        """
         totalWidth = 0
         for char in text:
             glyph_name = self.cmap.get(ord(char))
@@ -87,26 +100,24 @@ class FontMetrics:
                 totalWidth += width
             else:
                 totalWidth += FONT.fontAvgWidthUnits
-        return totalWidth
+        
+        widthPts = (totalWidth * size.size) / FONT.unitsPerEm
+        widthInches = widthPts / 72
+        width = int(widthInches * SCALE_FACTOR)
 
-    def getLineWeight(self, text: str, size: SizeInfo) -> float:
+        return width
+
+    def getHeight(self, text: str, size: SizeInfo) -> int:
+        """ Returns the height a string will consume. """
         if not text.strip():  # Empty or whitespace-only text
-            return size.size / 72  # Just spacing
+            return int((size.size / 72) * SCALE_FACTOR)  # Just spacing
             
-        totalWidth = self.getWidth(text)
+        width = self.getWidth(text, size)
+        lineCount = math.ceil(width / self.maxWidth)
         
-        widthPts = (totalWidth * size.size) / FONT.unitsPerEm
-        widthInches = widthPts / 72
-        lineCount = math.ceil(widthInches / self.maxWidthInches)
+        height = size.height * lineCount
         
-        return size.heightInch * lineCount
-
-    def getWordWeight(self, text: str, size: SizeInfo) -> float:
-        totalWidth = self.getWidth(text)
-        widthPts = (totalWidth * size.size) / FONT.unitsPerEm
-        widthInches = widthPts / 72
-
-        return widthInches
+        return height
 
 FONT_METRICS = FontMetrics(FONT.path)
 
@@ -120,12 +131,12 @@ class ItemType(Enum):
 class ProcessedItem:
     text: str
     index: int
-    lineWeight: float|None
-    wordWeight: float|None
+    lineHeight: int
+    lineWidth: int
     itemType: ItemType
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-def loadYAML(path):
+def loadYAML(path:str) -> dict|None:
     try:
         if not Path(path).exists():
             raise FileNotFoundError(f"Template not found, looking for file: {path}")
@@ -148,7 +159,11 @@ def loadYAML(path):
         print(f"Error loading YAML: {e}")
         return None
 
-def combine(texts, seperator):
+def combine(texts: list[str], seperator: str) -> str:
+    """ 
+        Returns a concatenation of the provided list of words seperated by the seperator.
+        The last word in the string does not have a trailing seperator.
+    """
     line = ""
     for text in texts[:-1]:
         line += text
@@ -157,7 +172,7 @@ def combine(texts, seperator):
 
     return line
 
-def generateRequiredLines(content):
+def generateRequiredLines(content: dict) -> list[tuple[str, SizeInfo]]:
     lines = []
 
     # Contact Info
@@ -172,26 +187,17 @@ def generateRequiredLines(content):
     # Skills
     s = content['skills']
     lines.append((s['title'], FontSize.TITLE))
-
+    # HACK: Placeholder line to gurantee space for skills section
+    lines.append(('XXX', FontSize.REGULAR))
+    lines.append(('XXX', FontSize.REGULAR))
+    
     # Gap
     lines.append(('', Spacing.GAP))
 
     # Experience
     e = content['experience']
     lines.append((e['title'], FontSize.TITLE))
-    job = e['jobs'][0]
-
-    lines.append((job['role'], FontSize.REGULAR))
-    lines.append((job['company'], FontSize.REGULAR))
-    lines.append((job['location'], FontSize.REGULAR))
-
-    timeRange = combine([job['from'], job['to']], ' \u2014 ') # Em Dash
-    lines.append((timeRange, FontSize.REGULAR))
-
     lines.append(('', Spacing.GAP_SMALL))
-
-    # Gap
-    lines.append(('', Spacing.GAP))
     
     # Education
     e = content['education']
@@ -225,36 +231,37 @@ def generateRequiredLines(content):
 
     return lines
 
-def makeBatch(content):
+def makeBatch(content: dict) -> tuple[list[str], list[ProcessedItem]]:
     batchIn = []
     processedItems = []
     rootIdx = 0
 
-    #skills = content['skills']['list']
-    #if (skills): 
-    #    for s in skills:
-    #        lineWeight = FONT_METRICS.getLineWeight(s, FontSize.REGULAR)
-    #        batchIn.append(s)
-    #        processedItems.append(ProcessedItem(
-    #            text = s,
-    #            index = rootIdx,
-    #            lineWeight = lineWeight,
-    #            itemType = ItemType.SKILL
-    #        ))
+    skills = content['skills']['list']
+    if (skills): 
+        for s in skills:
+            lineWidth = FONT_METRICS.getWidth(s, FontSize.REGULAR)
+            batchIn.append(s)
+            processedItems.append(ProcessedItem(
+                text = s,
+                index = rootIdx,
+                lineHeight = 0,
+                lineWidth = lineWidth,
+                itemType = ItemType.SKILL
+            ))
 
-    #        rootIdx += 1
+            rootIdx += 1
 
     jobs = content['experience']['jobs']
     for jIdx ,j in enumerate(jobs):
         for sIdx, s in enumerate(j['sections']):
             for pIdx, p in enumerate(s['points']):
-                lineWeight = FONT_METRICS.getLineWeight(p, FontSize.REGULAR)
+                lineHeight = FONT_METRICS.getHeight(f"- {p}", FontSize.REGULAR)
                 batchIn.append(p)
                 processedItems.append(ProcessedItem(
                     text = p,
                     index = rootIdx,
-                    lineWeight = lineWeight,
-                    wordWeight = None,
+                    lineHeight = lineHeight,
+                    lineWidth = 0,
                     itemType = ItemType.POINT,
                     metadata = {
                         'jobIndex': jIdx,
@@ -265,13 +272,13 @@ def makeBatch(content):
                 rootIdx += 1
 
             for kIdx, k in enumerate(s['keywords']):
-                wordWeight = FONT_METRICS.getWordWeight(k, FontSize.REGULAR)
+                lineWidth = FONT_METRICS.getWidth(k, FontSize.REGULAR)
                 batchIn.append(k)
                 processedItems.append(ProcessedItem(
                     text = k,
                     index = rootIdx,
-                    lineWeight = None,
-                    wordWeight = wordWeight,
+                    lineHeight = 0,
+                    lineWidth = lineWidth,
                     itemType = ItemType.KEYWORD,
                     metadata = {
                         'jobIndex': jIdx,
@@ -285,25 +292,25 @@ def makeBatch(content):
     processedItems.append(ProcessedItem(
         text = JOB_POSTING,
         index = rootIdx,
-        lineWeight = None,
-        wordWeight = None,
+        lineHeight = 0,
+        lineWidth = 0,
         itemType = ItemType.JOB_POSTING
     ))
 
     return batchIn, processedItems
 
-def getRequiredLineWeights(lines):
-    maxHeightInches = (PAGE_HEIGHT_INCHES - MARGIN_INCHES[0] - MARGIN_INCHES[2]) * MAX_PAGES
-    totalHeight = sum(FONT_METRICS.getLineWeight(text, size) for text, size in lines)
-    remainingHeight = max(maxHeightInches - totalHeight, 0)
+def getRequiredLineWeights(lines: list[tuple[str, SizeInfo]]) -> tuple[int, int]:
+    maxHeight = (PAGE_HEIGHT - MARGIN[0] - MARGIN[2]) * MAX_PAGES
+    totalHeight = sum(FONT_METRICS.getHeight(text, size) for text, size in lines)
+    remainingHeight = max(maxHeight - totalHeight, 0)
     
     return totalHeight, remainingHeight
 
-def encode(batch):
+def encode(batch: list[str]):
     model = SentenceTransformer(MODEL)
     return model.encode(batch)
 
-def analyze(processedItems, embeddings):
+def analyze(processedItems: list[ProcessedItem], embeddings) -> list[float]:
     # NOTE: Maybe iterate in reverse since jobPosting is the last thing appended
     jobPostingItem = next(item for item in processedItems if item.itemType == ItemType.JOB_POSTING)
     jobPostingEmbedding = embeddings[jobPostingItem.index].reshape(1, -1)
@@ -312,7 +319,7 @@ def analyze(processedItems, embeddings):
     
     return similarities.tolist()
 
-def knapsack(values, weights, capacity):
+def knapsack(values: list[float], weights: list[int], capacity: int) -> list[bool]:
     n = len(values)
     if n != len(weights):
         print("Every value must have a weight")
@@ -338,78 +345,67 @@ def knapsack(values, weights, capacity):
     for i in range(n, 0, -1):
         if table[i][w] != table[i - 1][w]:
             selected[i - 1] = True
-            w -= weights[i - 1]
+            w -= intWeights[i - 1]
 
     return selected
 
-def getLineOverhead(fontSize = FontSize.REGULAR):
-    lineHeight = fontSize.heightInch
+def prunePoints(items: list[ProcessedItem], similarities: list[float], heightRemaining: int) -> tuple[list[ProcessedItem], set, set, int]:
+    print(f"Height Remaining: {heightRemaining}")
+    lineHeight = FontSize.REGULAR.height
     
-    jobOverheadHeight = FontSize.TITLE.heightInch + 4 * FontSize.REGULAR.heightInch + Spacing.GAP_SMALL.heightInch
-    jobOverheadLines = math.ceil(jobOverheadHeight / lineHeight)
+    jobOverhead = (4 * lineHeight) + Spacing.GAP_SMALL.height
+    # HACK: adding FontSize.REGULAR.heightInch to sectionOverheadHeight gurantees a line for the keywords
+    #       of the section, and is deducted before returning the available space in the final return call.
+    sectionOverhead = FontSize.SUBTITLE.height + FontSize.REGULAR.height
     
-    sectionOverheadHeight = (FontSize.SUBTITLE.heightInch + Spacing.GAP_SMALL.heightInch)
-    sectionOverheadLines = math.ceil(sectionOverheadHeight / lineHeight)
-    
-    return jobOverheadLines, sectionOverheadLines
-
-def getDistinctionsFromChosen(items, chosen):
-    jobs = set()
-    sections = set()
-
-    for i, picked in enumerate(chosen):
-        if picked:
-            item = items[i]
-            jobIdx = item.metadata['jobIndex']
-            sectionIdx = item.metadata['sectionIndex']
-
-            jobs.add(jobIdx)
-            sections.add(sectionIdx)
-
-    return jobs, sections
-
-def prunePoints(items, similarities, heightRemaining):
-    jobOverhead, sectionOverhead = getLineOverhead()
-
-    def iterate(_capacity, maxIterations = 10):
+    def iterate(_capacity):
         if _capacity <= 0:
             return [False] * len(targetValues)
 
-        if all(twl == targetLineWeights[0] for twl in targetLineWeights):
+        # OPTIMIZE: Apparently there is an optimization here
+        if all(tw == targetWeights[0] for tw in targetWeights):
+            print('targets are the same weight')
+            maxItems = _capacity // targetWeights[0]
             sortedTargets = sorted(range(len(targetValues)), key = lambda i: targetValues[i], reverse = True)
             chosen = [False] * len(targetValues)
-            for i in sortedTargets[:_capacity]:
+            for i in sortedTargets[:maxItems]:
                 chosen[i] = True
         else:
+            print(f"targetWeights: {targetWeights}")
+            print(f'_capacity: {_capacity}')
             chosen = knapsack(targetValues, targetWeights, _capacity)
 
         return chosen
 
     targets = [item for item in items if item.itemType == ItemType.POINT]
     targetValues = [similarities[item.index] for item in targets]
-    targetWeights = [item.lineWeight for item in targets]
-    
-    lineHeight = FontSize.REGULAR.heightInch
-    targetLineWeights = [(math.ceil(tw / lineHeight)) for tw in targetWeights]
+    targetWeights = [item.lineHeight for item in targets]
+    capacity = heightRemaining
 
-    capacity = math.floor(heightRemaining / lineHeight)
-
-    print(f"Available space: {capacity} lines")
-    print(f"Total job points available: {len(targets)}")
-
+    chosen = []
     accountedJobs = set()
     accountedSections = set()
     curCapacity = capacity
     iteration = 0
-    maxIterations = 10
-    
-    print(f"Starting optimization with capacity: {curCapacity} lines")
+    maxIterations = 10 
     while iteration < maxIterations:
         iteration += 1
+        print(f'Iteration: {iteration}')
 
+        print(f'Capacity: {curCapacity}')
         chosen = iterate(curCapacity)
 
-        distinctJobs, distinctSections = getDistinctionsFromChosen(items, chosen)
+        ckeepers = [targets[i] for i, picked in enumerate(chosen) if picked]
+    
+        distinctJobs, distinctSections = set(), set()
+        for i, picked in enumerate(chosen):
+            if picked:
+                item = targets[i]
+                jobIdx = item.metadata['jobIndex']
+                sectionIdx = item.metadata['sectionIndex']
+
+                distinctJobs.add(jobIdx)
+                distinctSections.add(sectionIdx)
 
         newJobs = distinctJobs - accountedJobs
         removedJobs = accountedJobs - distinctJobs
@@ -418,93 +414,112 @@ def prunePoints(items, similarities, heightRemaining):
 
         newOverhead = jobOverhead * len(newJobs) + sectionOverhead * len(newSections)
         removedOverhead = jobOverhead * len(removedJobs) + sectionOverhead * len(removedSections)
-
         netOverheadChange = newOverhead - removedOverhead
         
-        print(f"Iteration {iteration}:")
-        print(f"  Current capacity: {curCapacity} lines")
-        print(f"  Selected: {sum(chosen)} points from {len(distinctJobs)} jobs, {len(distinctSections)} sections")
-        print(f"  New jobs: {len(newJobs)}, Removed jobs: {len(removedJobs)}")
-        print(f"  New sections: {len(newSections)}, Removed sections: {len(removedSections)}")
-        print(f"  Overhead change: +{newOverhead} -{removedOverhead} = {netOverheadChange} lines")
-        
         if netOverheadChange == 0:
+            print('no change, breaking')
             break
         elif netOverheadChange > 0:
+            print(f'increased overhead, reducing capacity by {netOverheadChange}')
             curCapacity -= netOverheadChange
             if curCapacity <= 0:
                 chosen = [False] * len(items)
                 distinctJobs, distinctSections = set(), set()
                 break
         else:
+            print(f'decreased overhead, increasing capacity by {netOverheadChange}')
             # Increase capacity when netOverheadChange is negative
             curCapacity -= netOverheadChange
         
         accountedJobs = distinctJobs.copy()
         accountedSections = distinctSections.copy()
 
-        if abs(netOverheadChange) < 2:
+        if abs(netOverheadChange) <= 1:
             break
 
-    print(f"\nOptimization completed in {iteration} iterations")
+    keepers = [targets[i] for i, picked in enumerate(chosen) if picked]
+    keepersHeight = sum([k.lineHeight for k in keepers])
+    print(f"Chosen take up: {keepersHeight}")
+    keepersOverheadHeight = (jobOverhead * len(accountedJobs)) + (sectionOverhead * len(accountedSections))
+    print(f"Overhead takes up: {keepersOverheadHeight}")
 
-    cnt = 0
-    ocnt = 0
-    sumIn = 0
-    sumOut = 0
-    for i, picked in enumerate(chosen):
-        if picked:
-            cnt += 1
-            sumIn += targetValues[i]
-            print(f"{cnt}. {targets[i].text}")
-        else:
-            ocnt += 1
-            sumOut += targetValues[i]
+    keywordReserve = len(accountedSections) * FontSize.REGULAR.height
+    usedSpace = keepersHeight + keepersOverheadHeight - keywordReserve
+    remainingSpace = heightRemaining - usedSpace
+    print(f"Remaining Space = {remainingSpace}")
 
-    Iavg = sumIn / (cnt)
-    Oavg = sumOut / (ocnt)
+    return keepers, accountedJobs, accountedSections, usedSpace
 
-    print(f"In Average: {Iavg}")
-    print(f"Out Average: {Oavg}")
-
-    return chosen, accountedJobs, accountedSections
-
-
-def pruneKeywords(items, similarities, sections, maxLines = 1):
-    SCALE_FACTOR = 100
-
+def pruneKeywords(items: list[ProcessedItem], similarities: list[float], sections: set, maxLines: int = 1) -> tuple[list[ProcessedItem], int]:
     keywords = [item for item in items if item.itemType == ItemType.KEYWORD]
-
     if not keywords:
-        return []
+        return [], 0
 
     header = "Technologies Used: "
     seperator = ", "
 
-    headerWeight = FONT_METRICS.getWordWeight(header, FontSize.REGULAR)
-    seperatorWeight = FONT_METRICS.getWordWeight(seperator, FontSize.REGULAR)
-    constWeight = FONT_METRICS.maxWidthInches * maxLines - headerWeight
+    headerWeight = FONT_METRICS.getWidth(header, FontSize.REGULAR)
+    seperatorWeight = FONT_METRICS.getWidth(seperator, FontSize.REGULAR)
+    constWeight = FONT_METRICS.maxWidth * maxLines - headerWeight
 
     keepers = []
+    keepersHeight = 0
     for sectionIdx in sections:
         sectionKeywords = [k for k in keywords if k.metadata['sectionIndex'] == sectionIdx]
+        validationText = [k.text for k in sectionKeywords]
         
         skValues = [similarities[sk.index] for sk in sectionKeywords]
-        skWeights = [int(sk.wordWeight * SCALE_FACTOR) for sk in sectionKeywords]
+        skWeights = [sk.lineWidth for sk in sectionKeywords]
         
-        availableSpace = constWeight - (len(keywords) - 1) * seperatorWeight
-        if availableSpace <= 0:
-            return []
-
-        capacity = int(availableSpace * SCALE_FACTOR)
+        capacity = constWeight - (len(keywords) - 1) * seperatorWeight
+        if capacity <= 0:
+            return [], 0
 
         chosen = knapsack(skValues, skWeights, capacity)
 
+        keepersText = []
         for i, picked in enumerate(chosen):
             if picked:
                 keepers.append(sectionKeywords[i])
+                keepersText.append(validationText[i])
+        
+        keepersHeight += FONT_METRICS.getHeight(combine(keepersText, seperator), FontSize.REGULAR)
 
-    return keepers
+    return keepers, keepersHeight
+
+def pruneSkills(items: list[ProcessedItem], similarities: list[float], maxLines: int = 2) -> tuple[list[ProcessedItem], int]:
+    skills = [item for item in items if item.itemType == ItemType.SKILL]
+    if not skills:
+        return [], 0
+
+    seperator = ", "
+
+    seperatorWeight = FONT_METRICS.getWidth(seperator, FontSize.REGULAR)
+    constWeight = FONT_METRICS.maxWidth * maxLines
+
+    keepers = []
+    keepersHeight = 0
+        
+    validationText = [s.text for s in skills]
+        
+    skillValues = [similarities[s.index] for s in skills]
+    skillWeights = [s.lineWidth for s in skills]
+        
+    capacity = constWeight - (len(skills) - 1) * seperatorWeight
+    if capacity <= 0:
+        return [], 0
+
+    chosen = knapsack(skillValues, skillWeights, capacity)
+
+    keepersText = []
+    for i, picked in enumerate(chosen):
+        if picked:
+            keepers.append(skills[i])
+            keepersText.append(validationText[i])
+    
+    keepersHeight += FONT_METRICS.getHeight(combine(keepersText, seperator), FontSize.REGULAR)
+
+    return keepers, keepersHeight
 
 
 if __name__ == "__main__":
@@ -534,17 +549,28 @@ if __name__ == "__main__":
     
     similarities = analyze(processedItems, embeddings)
 
-    # TODO: prune skills, and prune keywords with traditional knapsack. Need height remaining out of prior pruning.
-    # Account for keywords and skills being seperated with ", ". Then subtract that from the max_width as capacity.
-    # Can turn weight and capacity into integers by multiplying by 100, then correcting afterwards. For pruning these
-    # we can pass a maxLines which will be determined by the height remaining, should be at least 1 though.
+    points, jobs, sections, usedSpace = prunePoints(processedItems, similarities, heightRemaining)
 
-    # TODO: just pass what you're pruning instead of all of the items
-    points, jobs, sections = prunePoints(processedItems, similarities, heightRemaining)
+    heightRemaining -= usedSpace
+    
+    print(f"Height Remaining Inches: {heightRemaining}")
 
-    print(jobs)
-    print(sections)
+    # HACK: prunePoints gurantees 1 line per section for keywords
+    keywords, keywordsHeight = pruneKeywords(processedItems, similarities, sections, 1)
 
-    keywords = pruneKeywords(processedItems, similarities, sections, 1)
-    for k in keywords:
-        print(k)
+    print(f"Keyword Height: {keywordsHeight}")
+
+    heightRemaining -= keywordsHeight
+
+    print(f"Height Remaining: {heightRemaining}")
+    # HACK: pruneSkills has 2 lines guranteed in requiredLines
+    heightRemaining += 2 * FONT_METRICS.getHeight('X', FontSize.REGULAR)
+
+    print(f"Adding back 2 lines reserved for skills: {heightRemaining}")
+    skills, skillsHeight = pruneSkills(processedItems, similarities, 2)
+
+    print(f"Skills Height: {skillsHeight}")
+    heightRemaining -= skillsHeight
+
+    print(f"Remaining Height: {heightRemaining}")
+
