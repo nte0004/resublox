@@ -136,6 +136,24 @@ class ProcessedItem:
     itemType: ItemType
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+@dataclass
+class SpaceInformation:
+    jobOverhead: int = field(init = False)
+    sectionOverhead: int = field(init = False)
+    skillReserve: int = field(init = False)
+    keywordReserve: int = field(init = False)
+    keywordLinesPerSection: int = 1
+    skillsLineCount: int = 2
+
+    def __init__(self):
+        # TODO: Have these be defined relative to some kind of YAML schema
+        self.jobOverhead = (4 * FontSize.REGULAR.height) + Spacing.GAP_SMALL.height
+        self.sectionOverhead = FontSize.SUBTITLE.height + FontSize.REGULAR.height
+        self.skillReserve = self.skillsLineCount * FontSize.REGULAR.height
+        self.keywordReserve = self.keywordLinesPerSection * FontSize.REGULAR.height
+
+SPACE_INFO = SpaceInformation()
+
 def loadYAML(path:str) -> dict|None:
     try:
         if not Path(path).exists():
@@ -187,9 +205,6 @@ def generateRequiredLines(content: dict) -> list[tuple[str, SizeInfo]]:
     # Skills
     s = content['skills']
     lines.append((s['title'], FontSize.TITLE))
-    # HACK: Placeholder line to gurantee space for skills section
-    lines.append(('XXX', FontSize.REGULAR))
-    lines.append(('XXX', FontSize.REGULAR))
     
     # Gap
     lines.append(('', Spacing.GAP))
@@ -219,7 +234,8 @@ def generateRequiredLines(content: dict) -> list[tuple[str, SizeInfo]]:
             gradLine = f"Graduated: {grad['on']}"
         else:
             gradLine = f"Expected Graduation: {grad['on']}"
-            lines.append((gradLine, FontSize.REGULAR))
+
+        lines.append((gradLine, FontSize.REGULAR))
 
     lines.append((f"GPA: {e['gpa']}", FontSize.REGULAR))
 
@@ -299,12 +315,12 @@ def makeBatch(content: dict) -> tuple[list[str], list[ProcessedItem]]:
 
     return batchIn, processedItems
 
-def getRequiredLineWeights(lines: list[tuple[str, SizeInfo]]) -> tuple[int, int]:
+def getRequiredLineWeights(lines: list[tuple[str, SizeInfo]]) -> int:
     maxHeight = (PAGE_HEIGHT - MARGIN[0] - MARGIN[2]) * MAX_PAGES
     totalHeight = sum(FONT_METRICS.getHeight(text, size) for text, size in lines)
     remainingHeight = max(maxHeight - totalHeight, 0)
     
-    return totalHeight, remainingHeight
+    return remainingHeight
 
 def encode(batch: list[str]):
     model = SentenceTransformer(MODEL)
@@ -349,14 +365,8 @@ def knapsack(values: list[float], weights: list[int], capacity: int) -> list[boo
 
     return selected
 
-def prunePoints(items: list[ProcessedItem], similarities: list[float], heightRemaining: int) -> tuple[list[ProcessedItem], set, set, int]:
+def prunePoints(items: list[ProcessedItem], similarities: list[float], heightRemaining: int) -> tuple[list[ProcessedItem], int, set]:
     print(f"Height Remaining: {heightRemaining}")
-    lineHeight = FontSize.REGULAR.height
-    
-    jobOverhead = (4 * lineHeight) + Spacing.GAP_SMALL.height
-    # HACK: adding FontSize.REGULAR.heightInch to sectionOverheadHeight gurantees a line for the keywords
-    #       of the section, and is deducted before returning the available space in the final return call.
-    sectionOverhead = FontSize.SUBTITLE.height + FontSize.REGULAR.height
     
     def iterate(_capacity):
         if _capacity <= 0:
@@ -412,8 +422,8 @@ def prunePoints(items: list[ProcessedItem], similarities: list[float], heightRem
         newSections = distinctSections - accountedSections
         removedSections = accountedSections - distinctSections
 
-        newOverhead = jobOverhead * len(newJobs) + sectionOverhead * len(newSections)
-        removedOverhead = jobOverhead * len(removedJobs) + sectionOverhead * len(removedSections)
+        newOverhead = SPACE_INFO.jobOverhead * len(newJobs) + SPACE_INFO.sectionOverhead * len(newSections)
+        removedOverhead = SPACE_INFO.jobOverhead * len(removedJobs) + SPACE_INFO.sectionOverhead * len(removedSections)
         netOverheadChange = newOverhead - removedOverhead
         
         if netOverheadChange == 0:
@@ -440,17 +450,19 @@ def prunePoints(items: list[ProcessedItem], similarities: list[float], heightRem
     keepers = [targets[i] for i, picked in enumerate(chosen) if picked]
     keepersHeight = sum([k.lineHeight for k in keepers])
     print(f"Chosen take up: {keepersHeight}")
-    keepersOverheadHeight = (jobOverhead * len(accountedJobs)) + (sectionOverhead * len(accountedSections))
+    keepersOverheadHeight = (SPACE_INFO.jobOverhead * len(accountedJobs)) + (SPACE_INFO.sectionOverhead * len(accountedSections))
     print(f"Overhead takes up: {keepersOverheadHeight}")
 
-    keywordReserve = len(accountedSections) * FontSize.REGULAR.height
+    # HACK: Space reserved for keywords here, as we need to know how many sections are being used first.
+    keywordReserve = len(accountedSections) * SPACE_INFO.keywordReserve
     usedSpace = keepersHeight + keepersOverheadHeight - keywordReserve
+    
     remainingSpace = heightRemaining - usedSpace
     print(f"Remaining Space = {remainingSpace}")
 
-    return keepers, accountedJobs, accountedSections, usedSpace
+    return keepers, usedSpace, accountedSections
 
-def pruneKeywords(items: list[ProcessedItem], similarities: list[float], sections: set, maxLines: int = 1) -> tuple[list[ProcessedItem], int]:
+def pruneKeywords(items: list[ProcessedItem], similarities: list[float], sections: set) -> tuple[list[ProcessedItem], int]:
     keywords = [item for item in items if item.itemType == ItemType.KEYWORD]
     if not keywords:
         return [], 0
@@ -460,7 +472,7 @@ def pruneKeywords(items: list[ProcessedItem], similarities: list[float], section
 
     headerWeight = FONT_METRICS.getWidth(header, FontSize.REGULAR)
     seperatorWeight = FONT_METRICS.getWidth(seperator, FontSize.REGULAR)
-    constWeight = FONT_METRICS.maxWidth * maxLines - headerWeight
+    constWeight = FONT_METRICS.maxWidth * SPACE_INFO.keywordLinesPerSection - headerWeight
 
     keepers = []
     keepersHeight = 0
@@ -487,7 +499,7 @@ def pruneKeywords(items: list[ProcessedItem], similarities: list[float], section
 
     return keepers, keepersHeight
 
-def pruneSkills(items: list[ProcessedItem], similarities: list[float], maxLines: int = 2) -> tuple[list[ProcessedItem], int]:
+def pruneSkills(items: list[ProcessedItem], similarities: list[float]) -> tuple[list[ProcessedItem], int]:
     skills = [item for item in items if item.itemType == ItemType.SKILL]
     if not skills:
         return [], 0
@@ -495,7 +507,7 @@ def pruneSkills(items: list[ProcessedItem], similarities: list[float], maxLines:
     seperator = ", "
 
     seperatorWeight = FONT_METRICS.getWidth(seperator, FontSize.REGULAR)
-    constWeight = FONT_METRICS.maxWidth * maxLines
+    constWeight = FONT_METRICS.maxWidth * SPACE_INFO.skillsLineCount
 
     keepers = []
     keepersHeight = 0
@@ -533,7 +545,7 @@ if __name__ == "__main__":
 
     requiredLines = generateRequiredLines(content)
 
-    heightUsed, heightRemaining = getRequiredLineWeights(requiredLines)
+    heightRemaining = getRequiredLineWeights(requiredLines) - SPACE_INFO.skillReserve
 
     if (heightRemaining <= 0):
         # NOTE: This check misses that fact that remainingHeight may be less than the height of a single line
@@ -549,25 +561,23 @@ if __name__ == "__main__":
     
     similarities = analyze(processedItems, embeddings)
 
-    points, jobs, sections, usedSpace = prunePoints(processedItems, similarities, heightRemaining)
+    points, pointsSpace, sections = prunePoints(processedItems, similarities, heightRemaining)
 
-    heightRemaining -= usedSpace
+    heightRemaining -= pointsSpace
     
     print(f"Height Remaining Inches: {heightRemaining}")
 
-    # HACK: prunePoints gurantees 1 line per section for keywords
-    keywords, keywordsHeight = pruneKeywords(processedItems, similarities, sections, 1)
+    keywords, keywordsHeight = pruneKeywords(processedItems, similarities, sections)
 
     print(f"Keyword Height: {keywordsHeight}")
 
     heightRemaining -= keywordsHeight
 
     print(f"Height Remaining: {heightRemaining}")
-    # HACK: pruneSkills has 2 lines guranteed in requiredLines
-    heightRemaining += 2 * FONT_METRICS.getHeight('X', FontSize.REGULAR)
+    
+    heightRemaining += SPACE_INFO.skillReserve
 
-    print(f"Adding back 2 lines reserved for skills: {heightRemaining}")
-    skills, skillsHeight = pruneSkills(processedItems, similarities, 2)
+    skills, skillsHeight = pruneSkills(processedItems, similarities)
 
     print(f"Skills Height: {skillsHeight}")
     heightRemaining -= skillsHeight
