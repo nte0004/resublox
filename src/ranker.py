@@ -3,10 +3,12 @@ from pathlib import Path
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 from src.core import Models, FontMetrics, SpaceInformation, ProcessedItem, SizeInfo, FontSize, Spacing, ItemType
+from src.lineGenerator import LineGenerator, LineSpec
 
 MODEL = Models.SMALL
 TEMPLATE_PATH='template.example.yaml'
 FONT_METRICS = FontMetrics()
+LINE_GENERATOR = LineGenerator(FONT_METRICS)
 SPACE_INFO = SpaceInformation()
 
 def loadYAML(path:str) -> dict|None:
@@ -32,78 +34,6 @@ def loadYAML(path:str) -> dict|None:
         print(f"Error loading YAML: {e}")
         return None
 
-def combine(texts: list[str], seperator: str) -> str:
-    """ 
-        Returns a concatenation of the provided list of words seperated by the seperator.
-        The last word in the string does not have a trailing seperator.
-    """
-    line = ""
-    for text in texts[:-1]:
-        line += text
-        line += seperator
-    line += texts[-1];
-
-    return line
-
-def generateRequiredLines(content: dict) -> list[tuple[str, SizeInfo]]:
-    lines = []
-
-    # Contact Info
-    c = content['contact']
-    lines.append((c['name'], FontSize.NAME))
-    lines.append((f"Email: {c['email']} | Phone: {c['phone']} | {c['location']}", FontSize.REGULAR))
-    lines.append((f"Github: {c['github']} | Website: {c['website']}", FontSize.REGULAR))
-
-    # Gap
-    lines.append(('', Spacing.GAP))
-
-    # Skills
-    s = content['skills']
-    lines.append((s['title'], FontSize.TITLE))
-    
-    # Gap
-    lines.append(('', Spacing.GAP))
-
-    # Experience
-    e = content['experience']
-    lines.append((e['title'], FontSize.TITLE))
-
-    # Gap
-    lines.append(('', Spacing.GAP))
-    
-    # Education
-    e = content['education']
-    lines.append((e['title'], FontSize.TITLE))
-    
-    degree = f"{e['degree']} in {e['major']}"
-    lines.append((degree, FontSize.REGULAR))
-
-    conc = e.get('concentration', None)
-    if conc:
-        lines.append((f"Concentration in {conc}", FontSize.REGULAR))
-
-    school = f"{e['school']}, {e['location']}"
-    lines.append((school, FontSize.REGULAR))
-
-    grad = e.get('graduation', None)
-    if grad:
-        if grad['hasGraduated']:
-            gradLine = f"Graduated: {grad['on']}"
-        else:
-            gradLine = f"Expected Graduation: {grad['on']}"
-
-        lines.append((gradLine, FontSize.REGULAR))
-
-    lines.append((f"GPA: {e['gpa']}", FontSize.REGULAR))
-
-    honorsList = combine(e['honors'], ', ')
-    lines.append((f"Honors: {honorsList}", FontSize.REGULAR))
-
-    courseList = combine(e['courses'], ', ')
-    lines.append((f"Relevant Courses: {courseList}", FontSize.REGULAR))
-
-    return lines
-
 def makeBatch(content: dict, jobPosting: str) -> tuple[list[str], list[ProcessedItem]]:
     batchIn = []
     processedItems = []
@@ -112,6 +42,7 @@ def makeBatch(content: dict, jobPosting: str) -> tuple[list[str], list[Processed
     skills = content['skills']['list']
     if (skills): 
         for s in skills:
+            lineSpec = LINE_GENERATOR.generateSkillsContent([s])
             lineWidth = FONT_METRICS.getWidth(s, FontSize.REGULAR)
             batchIn.append(s)
             processedItems.append(ProcessedItem(
@@ -121,14 +52,14 @@ def makeBatch(content: dict, jobPosting: str) -> tuple[list[str], list[Processed
                 lineWidth = lineWidth,
                 itemType = ItemType.SKILL
             ))
-
             rootIdx += 1
 
     jobs = content['experience']['jobs']
     for jIdx ,j in enumerate(jobs):
         for sIdx, s in enumerate(j['sections']):
             for pIdx, p in enumerate(s['points']):
-                lineHeight = FONT_METRICS.getHeight(f"- {p}", FontSize.REGULAR)
+                lineSpec = LINE_GENERATOR.generatePointLine(p, jIdx, sIdx, pIdx)
+                lineHeight = LINE_GENERATOR.calculateHeight(lineSpec)
                 batchIn.append(p)
                 processedItems.append(ProcessedItem(
                     text = p,
@@ -172,10 +103,11 @@ def makeBatch(content: dict, jobPosting: str) -> tuple[list[str], list[Processed
 
     return batchIn, processedItems
 
-def getRequiredLineWeights(lines: list[tuple[str, SizeInfo]]) -> int:
-    totalHeight = sum(FONT_METRICS.getHeight(text, size) for text, size in lines)
+def getRequiredLineWeights(content: dict) -> int:
+    requiredLines = LINE_GENERATOR.generateAllRequiredLines(content)
+    totalHeight = LINE_GENERATOR.calculateTotalHeight(requiredLines)
+    #safetyMargin = int(SPACE_INFO.maxHeight * 0.03)
     remainingHeight = max(SPACE_INFO.maxHeight - totalHeight, 0)
-    
     return remainingHeight
 
 def encode(batch: list[str]):
@@ -184,12 +116,9 @@ def encode(batch: list[str]):
     return model.encode(batch)
 
 def analyze(processedItems: list[ProcessedItem], embeddings) -> list[float]:
-    # NOTE: Maybe iterate in reverse since jobPosting is the last thing appended
     jobPostingItem = next(item for item in processedItems if item.itemType == ItemType.JOB_POSTING)
     jobPostingEmbedding = embeddings[jobPostingItem.index].reshape(1, -1)
-
     similarities = cosine_similarity(embeddings, jobPostingEmbedding).flatten()
-    
     return similarities.tolist()
 
 def knapsack(values: list[float], weights: list[int], capacity: int) -> list[bool]:
@@ -222,7 +151,31 @@ def knapsack(values: list[float], weights: list[int], capacity: int) -> list[boo
 
     return selected
 
-def prunePoints(items: list[ProcessedItem], similarities: list[float], heightRemaining: int) -> tuple[list[ProcessedItem], int, set, set]:
+def calculateJobOverhead(content: dict, jobIndex: int) -> int:
+    job = content['experience']['jobs'][jobIndex]
+    jobHeaderLines = LINE_GENERATOR.generateJobHeader(job, jobIndex)
+    return LINE_GENERATOR.calculateTotalHeight(jobHeaderLines)
+
+def calculateSectionOverhead(content: dict, jobIndex: int, sectionIndex: int, isFirstInJob: bool) -> int:
+    section = content['experience']['jobs'][jobIndex]['sections'][sectionIndex]
+    sectionHeaderLines = LINE_GENERATOR.generateSectionHeader(section, jobIndex, sectionIndex, isFirstInJob)
+    return LINE_GENERATOR.calculateTotalHeight(sectionHeaderLines)
+
+def estimateKeywordsHeight(content: dict, jobIdx: int, sectionIdx: int) -> int:
+    section = content['experience']['jobs'][jobIdx]['sections'][sectionIdx]
+    if 'keywords' not in section or not section['keywords']:
+        return 0
+    dummyLine = LINE_GENERATOR.generateKeywordsLine(section['keywords'], jobIdx, sectionIdx)
+    return LINE_GENERATOR.calculateHeight(dummyLine)
+
+def estimateLinksHeight(content: dict, jobIdx: int, sectionIdx: int) -> int:
+    section = content['experience']['jobs'][jobIdx]['sections'][sectionIdx]
+    if 'links' not in section or not section['links']:
+        return 0
+    dummyLine = LINE_GENERATOR.generateLinksLine(section['links'], jobIdx, sectionIdx)
+    return LINE_GENERATOR.calculateHeight(dummyLine)
+
+def prunePoints(content: dict, items: list[ProcessedItem], similarities: list[float], heightRemaining: int) -> tuple[list[ProcessedItem], int, set, set]:
     
     def iterate(_capacity):
         if _capacity <= 0:
@@ -250,11 +203,12 @@ def prunePoints(items: list[ProcessedItem], similarities: list[float], heightRem
     curCapacity = capacity
     iteration = 0
     maxIterations = 10 
+    
     while iteration < maxIterations:
         iteration += 1
         print(f'Iteration: {iteration}')
-
         print(f'Capacity: {curCapacity}')
+        
         chosen = iterate(curCapacity)
 
         distinctJobs, distinctSections = set(), set()
@@ -263,19 +217,36 @@ def prunePoints(items: list[ProcessedItem], similarities: list[float], heightRem
                 item = targets[i]
                 jobIdx = item.metadata['jobIndex']
                 sectionIdx = item.metadata['sectionIndex']
-
                 distinctJobs.add(jobIdx)
-                distinctSections.add(sectionIdx)
+                distinctSections.add((jobIdx, sectionIdx))
 
         newJobs = distinctJobs - accountedJobs
         removedJobs = accountedJobs - distinctJobs
         newSections = distinctSections - accountedSections
         removedSections = accountedSections - distinctSections
 
-
-        # TODO: Account for link line in sections
-        newOverhead = (SPACE_INFO.jobOverhead * len(newJobs) - Spacing.GAP.height) + (SPACE_INFO.sectionOverhead + SPACE_INFO.keywordReserve) * len(newSections) - Spacing.GAP_SMALL.height
-        removedOverhead = SPACE_INFO.jobOverhead * len(removedJobs) + (SPACE_INFO.sectionOverhead + SPACE_INFO.keywordReserve) * len(removedSections)
+        newOverhead = 0
+        for jobIdx in newJobs:
+            newOverhead += calculateJobOverhead(content, jobIdx)
+        
+        for jobIdx, sectionIdx in newSections:
+            jobSections = [s for j, s in distinctSections if j == jobIdx]
+            isFirstInJob = sectionIdx == min(jobSections)
+            newOverhead += calculateSectionOverhead(content, jobIdx, sectionIdx, isFirstInJob)
+            newOverhead += estimateKeywordsHeight(content, jobIdx, sectionIdx)
+            newOverhead += estimateLinksHeight(content, jobIdx, sectionIdx)
+        
+        removedOverhead = 0
+        for jobIdx in removedJobs:
+            removedOverhead += calculateJobOverhead(content, jobIdx)
+        
+        for jobIdx, sectionIdx in removedSections:
+            oldJobSections = [s for j, s in accountedSections if j == jobIdx]
+            isFirstInJob = sectionIdx == min(oldJobSections) if oldJobSections else False
+            removedOverhead += calculateSectionOverhead(content, jobIdx, sectionIdx, isFirstInJob)
+            removedOverhead += estimateKeywordsHeight(content, jobIdx, sectionIdx)
+            removedOverhead += estimateLinksHeight(content, jobIdx, sectionIdx)
+        
         netOverheadChange = newOverhead - removedOverhead
         
         if netOverheadChange == 0:
@@ -287,7 +258,6 @@ def prunePoints(items: list[ProcessedItem], similarities: list[float], heightRem
                 distinctJobs, distinctSections = set(), set()
                 break
         else:
-            # Increase capacity when netOverheadChange is negative
             curCapacity -= netOverheadChange
         
         accountedJobs = distinctJobs.copy()
@@ -298,40 +268,49 @@ def prunePoints(items: list[ProcessedItem], similarities: list[float], heightRem
 
     keepers = [targets[i] for i, picked in enumerate(chosen) if picked]
     keepersHeight = sum([k.lineHeight for k in keepers])
-    keepersOverheadHeight = (SPACE_INFO.jobOverhead * len(accountedJobs)) + (SPACE_INFO.sectionOverhead * len(accountedSections))
-
-    # HACK: Space reserved for keywords here, as we need to know how many sections are being used first.
-    keywordReserve = len(accountedSections) * SPACE_INFO.keywordReserve
-    usedSpace = keepersHeight + keepersOverheadHeight - keywordReserve
     
-    remainingSpace = heightRemaining - usedSpace
+    keepersOverheadHeight = 0
+    for jobIdx in accountedJobs:
+        keepersOverheadHeight += calculateJobOverhead(content, jobIdx)
+    
+    for jobIdx, sectionIdx in accountedSections:
+        jobSections = [s for j, s in accountedSections if j == jobIdx]
+        isFirstInJob = sectionIdx == min(jobSections)
+        keepersOverheadHeight += calculateSectionOverhead(content, jobIdx, sectionIdx, isFirstInJob)
+    
+    usedSpace = keepersHeight + keepersOverheadHeight
 
     return keepers, usedSpace, accountedJobs, accountedSections
 
-def pruneKeywords(items: list[ProcessedItem], similarities: list[float], sections: set) -> tuple[list[ProcessedItem], int]:
+def pruneKeywords(content: dict, items: list[ProcessedItem], similarities: list[float], sections: set) -> tuple[list[ProcessedItem], int]:
     keywords = [item for item in items if item.itemType == ItemType.KEYWORD]
     if not keywords:
         return [], 0
 
-    header = "Technologies Used: "
     seperator = ", "
-
-    headerWeight = FONT_METRICS.getWidth(header, FontSize.REGULAR)
     seperatorWeight = FONT_METRICS.getWidth(seperator, FontSize.REGULAR)
-    constWeight = FONT_METRICS.maxWidth * SPACE_INFO.keywordLinesPerSection - headerWeight
 
     keepers = []
     keepersHeight = 0
-    for sectionIdx in sections:
-        sectionKeywords = [k for k in keywords if k.metadata['sectionIndex'] == sectionIdx]
+    
+    for jobIdx, sectionIdx in sections:
+        sectionKeywords = [k for k in keywords if k.metadata['jobIndex'] == jobIdx and k.metadata['sectionIndex'] == sectionIdx]
+        if not sectionKeywords:
+            continue
+            
         validationText = [k.text for k in sectionKeywords]
         
         skValues = [similarities[sk.index] for sk in sectionKeywords]
         skWeights = [sk.lineWidth for sk in sectionKeywords]
         
-        capacity = constWeight - (len(keywords) - 1) * seperatorWeight
+        dummyLine = LINE_GENERATOR.generateKeywordsLine(validationText, jobIdx, sectionIdx)
+        maxWidth = FONT_METRICS.maxWidth
+        headerWidth = FONT_METRICS.getWidth("Technologies Used: ", FontSize.REGULAR)
+        
+        capacity = maxWidth * SPACE_INFO.keywordLinesPerSection - headerWidth - (len(sectionKeywords) - 1) * seperatorWeight
+        
         if capacity <= 0:
-            return [], 0
+            continue
 
         chosen = knapsack(skValues, skWeights, capacity)
 
@@ -341,7 +320,9 @@ def pruneKeywords(items: list[ProcessedItem], similarities: list[float], section
                 keepers.append(sectionKeywords[i])
                 keepersText.append(validationText[i])
         
-        keepersHeight += FONT_METRICS.getHeight(combine(keepersText, seperator), FontSize.REGULAR)
+        if keepersText:
+            finalLine = LINE_GENERATOR.generateKeywordsLine(keepersText, jobIdx, sectionIdx)
+            keepersHeight += LINE_GENERATOR.calculateHeight(finalLine)
 
     return keepers, keepersHeight
 
@@ -351,18 +332,14 @@ def pruneSkills(items: list[ProcessedItem], similarities: list[float]) -> tuple[
         return [], 0
 
     seperator = ", "
-
     seperatorWeight = FONT_METRICS.getWidth(seperator, FontSize.REGULAR)
     constWeight = FONT_METRICS.maxWidth * SPACE_INFO.skillsLineCount
 
     keepers = []
-    keepersHeight = 0
-        
     validationText = [s.text for s in skills]
-        
     skillValues = [similarities[s.index] for s in skills]
     skillWeights = [s.lineWidth for s in skills]
-        
+    
     capacity = constWeight - (len(skills) - 1) * seperatorWeight
     if capacity <= 0:
         return [], 0
@@ -375,52 +352,43 @@ def pruneSkills(items: list[ProcessedItem], similarities: list[float]) -> tuple[
             keepers.append(skills[i])
             keepersText.append(validationText[i])
     
-    keepersHeight += FONT_METRICS.getHeight(combine(keepersText, seperator), FontSize.REGULAR)
+    keepersHeight = 0
+    if keepersText:
+        finalLine = LINE_GENERATOR.generateSkillsContent(keepersText)
+        keepersHeight = LINE_GENERATOR.calculateHeight(finalLine)
 
     return keepers, keepersHeight
 
-
 def rank(content: dict, jobPosting: str):
-    requiredLines = generateRequiredLines(content)
-
-    heightRemaining = getRequiredLineWeights(requiredLines) - SPACE_INFO.skillReserve
+    heightRemaining = getRequiredLineWeights(content) - SPACE_INFO.skillReserve
 
     if (heightRemaining <= 0):
-        # NOTE: This check misses that fact that remainingHeight may be less than the height of a single line
         print("The required content takes up all the space!")
         exit()
 
-    # TODO: Something to validate the YAML structure that must exist, does exist.
     batchIn, processedItems = makeBatch(content, jobPosting)
 
     print("Encoding data... this may take a while.")
-    
     embeddings = encode(batchIn)
-    
     similarities = analyze(processedItems, embeddings)
 
-    points, pointsSpace, jobs, sections = prunePoints(processedItems, similarities, heightRemaining)
-
+    points, pointsSpace, jobs, sections = prunePoints(content, processedItems, similarities, heightRemaining)
     heightRemaining -= pointsSpace
     
     print(f"Height Remaining Inches: {heightRemaining}")
 
-    keywords, keywordsHeight = pruneKeywords(processedItems, similarities, sections)
-
+    keywords, keywordsHeight = pruneKeywords(content, processedItems, similarities, sections)
     print(f"Keyword Height: {keywordsHeight}")
 
     heightRemaining -= keywordsHeight
-
     print(f"Height Remaining: {heightRemaining}")
     
     heightRemaining += SPACE_INFO.skillReserve
 
     skills, skillsHeight = pruneSkills(processedItems, similarities)
-
     print(f"Skills Height: {skillsHeight}")
+    
     heightRemaining -= skillsHeight
-
     print(f"Remaining Height: {heightRemaining}")
 
     return points, keywords, skills, jobs, sections
-

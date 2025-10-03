@@ -24,7 +24,7 @@ class Fonts:
 
 FONT = Fonts.ARIAL
 LINE_HEIGHT = 1.15
-SCALE_FACTOR = 100
+SCALE_FACTOR = 1000
 
 @dataclass
 class SizeInfo:
