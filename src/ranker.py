@@ -41,7 +41,7 @@ def makeBatch(content: dict, jobPosting: str) -> tuple[list[str], list[Processed
 
     skills = content['skills']['list']
     if (skills): 
-        for s in skills:
+        for sIdx, s in enumerate(skills):
             lineSpec = LINE_GENERATOR.generateSkillsContent([s])
             lineWidth = FONT_METRICS.getWidth(s, FontSize.REGULAR)
             batchIn.append(s)
@@ -50,7 +50,10 @@ def makeBatch(content: dict, jobPosting: str) -> tuple[list[str], list[Processed
                 index = rootIdx,
                 lineHeight = 0,
                 lineWidth = lineWidth,
-                itemType = ItemType.SKILL
+                itemType = ItemType.SKILL,
+                metadata = {
+                    'skillIndex': sIdx
+                }
             ))
             rootIdx += 1
 
@@ -92,6 +95,23 @@ def makeBatch(content: dict, jobPosting: str) -> tuple[list[str], list[Processed
                 ))
                 rootIdx += 1
 
+    courses = content['education']['courses']
+    if courses:
+        for cIdx, c in enumerate(courses):
+            lineWidth = FONT_METRICS.getWidth(c, FontSize.REGULAR)
+            batchIn.append(c)
+            processedItems.append(ProcessedItem(
+                text = c,
+                index = rootIdx,
+                lineHeight = 0,
+                lineWidth = lineWidth,
+                itemType = ItemType.COURSE,
+                metadata = {
+                    'courseIndex': cIdx
+                }
+            ))
+            rootIdx += 1
+
     batchIn.append(jobPosting)
     processedItems.append(ProcessedItem(
         text = jobPosting,
@@ -106,7 +126,6 @@ def makeBatch(content: dict, jobPosting: str) -> tuple[list[str], list[Processed
 def getRequiredLineWeights(content: dict) -> int:
     requiredLines = LINE_GENERATOR.generateAllRequiredLines(content)
     totalHeight = LINE_GENERATOR.calculateTotalHeight(requiredLines)
-    #safetyMargin = int(SPACE_INFO.maxHeight * 0.03)
     remainingHeight = max(SPACE_INFO.maxHeight - totalHeight, 0)
     return remainingHeight
 
@@ -287,8 +306,8 @@ def pruneKeywords(content: dict, items: list[ProcessedItem], similarities: list[
     if not keywords:
         return [], 0
 
-    seperator = ", "
-    seperatorWeight = FONT_METRICS.getWidth(seperator, FontSize.REGULAR)
+    separator = ", "
+    separatorWeight = FONT_METRICS.getWidth(separator, FontSize.REGULAR)
 
     keepers = []
     keepersHeight = 0
@@ -307,7 +326,7 @@ def pruneKeywords(content: dict, items: list[ProcessedItem], similarities: list[
         maxWidth = FONT_METRICS.maxWidth
         headerWidth = FONT_METRICS.getWidth("Technologies Used: ", FontSize.REGULAR)
         
-        capacity = maxWidth * SPACE_INFO.keywordLinesPerSection - headerWidth - (len(sectionKeywords) - 1) * seperatorWeight
+        capacity = maxWidth * SPACE_INFO.keywordLinesPerSection - headerWidth - (len(sectionKeywords) - 1) * separatorWeight
         
         if capacity <= 0:
             continue
@@ -331,8 +350,8 @@ def pruneSkills(items: list[ProcessedItem], similarities: list[float]) -> tuple[
     if not skills:
         return [], 0
 
-    seperator = ", "
-    seperatorWeight = FONT_METRICS.getWidth(seperator, FontSize.REGULAR)
+    separator = ", "
+    separatorWeight = FONT_METRICS.getWidth(separator, FontSize.REGULAR)
     constWeight = FONT_METRICS.maxWidth * SPACE_INFO.skillsLineCount
 
     keepers = []
@@ -340,7 +359,7 @@ def pruneSkills(items: list[ProcessedItem], similarities: list[float]) -> tuple[
     skillValues = [similarities[s.index] for s in skills]
     skillWeights = [s.lineWidth for s in skills]
     
-    capacity = constWeight - (len(skills) - 1) * seperatorWeight
+    capacity = constWeight - (len(skills) - 1) * separatorWeight
     if capacity <= 0:
         return [], 0
 
@@ -359,8 +378,120 @@ def pruneSkills(items: list[ProcessedItem], similarities: list[float]) -> tuple[
 
     return keepers, keepersHeight
 
+def pruneCourses(items: list[ProcessedItem], similarities: list[float]) -> tuple[list[ProcessedItem], int]:
+    courses = [item for item in items if item.itemType == ItemType.COURSE]
+    if not courses:
+        return [], 0
+
+    separator = ", "
+    separatorWeight = FONT_METRICS.getWidth(separator, FontSize.REGULAR)
+    constWeight = FONT_METRICS.maxWidth * SPACE_INFO.coursesLineCount
+
+    keepers = []
+    validationText = [c.text for c in courses]
+    courseValues = [similarities[c.index] for c in courses]
+    courseWeights = [c.lineWidth for c in courses]
+    
+    headerWidth = FONT_METRICS.getWidth("Relevant Courses: ", FontSize.REGULAR)
+    capacity = constWeight - headerWidth - (len(courses) - 1) * separatorWeight
+    
+    if capacity <= 0:
+        return [], 0
+
+    chosen = knapsack(courseValues, courseWeights, capacity)
+
+    keepersText = []
+    for i, picked in enumerate(chosen):
+        if picked:
+            keepers.append(courses[i])
+            keepersText.append(validationText[i])
+    
+    keepersHeight = 0
+    if keepersText:
+        finalLine = LINE_GENERATOR.generateCoursesLine(keepersText)
+        keepersHeight = LINE_GENERATOR.calculateHeight(finalLine)
+
+    return keepers, keepersHeight
+
+def filter(content: dict, skills: list[ProcessedItem], courses: list[ProcessedItem],
+           points: list[ProcessedItem], keywords: list[ProcessedItem],
+           jobs: set, sections: set) -> dict:
+
+    filteredContent = {
+        'contact': content['contact'],
+        'skills': content['skills'].copy(),
+        'experience': content['experience'].copy(),
+        'education': content['education'].copy()
+    }
+    
+    # Filter skills
+    skillIndices = sorted([s.metadata['skillIndex'] for s in skills])
+    filteredContent['skills']['list'] = [
+        content['skills']['list'][i] for i in skillIndices
+    ]
+    
+    # Filter courses
+    courseIndices = sorted([c.metadata['courseIndex'] for c in courses])
+    filteredContent['education']['courses'] = [
+        content['education']['courses'][i] for i in courseIndices
+    ]
+    
+    # Filter jobs and their sections/points
+    sortedJobIndices = sorted(jobs)
+    filteredContent['experience']['jobs'] = []
+    
+    for oldJobIdx in sortedJobIndices:
+        originalJob = content['experience']['jobs'][oldJobIdx]
+        filteredJob = {
+            'role': originalJob['role'],
+            'company': originalJob['company'],
+            'location': originalJob['location'],
+            'from': originalJob.get('from', originalJob.get('from_date', '')),
+            'to': originalJob.get('to', originalJob.get('to_date', '')),
+            'sections': []
+        }
+        
+        # Get sections for this job
+        jobSections = sorted([s for (j, s) in sections if j == oldJobIdx])
+        
+        for oldSectionIdx in jobSections:
+            originalSection = originalJob['sections'][oldSectionIdx]
+            
+            # Get points for this section
+            sectionPoints = [
+                p for p in points 
+                if p.metadata['jobIndex'] == oldJobIdx 
+                and p.metadata['sectionIndex'] == oldSectionIdx
+            ]
+            pointIndices = sorted([p.metadata['pointIndex'] for p in sectionPoints])
+            
+            # Get keywords for this section
+            sectionKeywords = [
+                k for k in keywords
+                if k.metadata['jobIndex'] == oldJobIdx
+                and k.metadata['sectionIndex'] == oldSectionIdx
+            ]
+            keywordIndices = sorted([k.metadata['keywordIndex'] for k in sectionKeywords])
+            
+            filteredSection = {
+                'title': originalSection['title'],
+                'points': [originalSection['points'][i] for i in pointIndices],
+                'keywords': [originalSection['keywords'][i] for i in keywordIndices]
+            }
+            
+            # Preserve links if they exist
+            if 'links' in originalSection and originalSection['links']:
+                filteredSection['links'] = originalSection['links']
+            
+            filteredJob['sections'].append(filteredSection)
+        
+        filteredContent['experience']['jobs'].append(filteredJob)
+    
+    return filteredContent
+
+
 def rank(content: dict, jobPosting: str):
-    heightRemaining = getRequiredLineWeights(content) - SPACE_INFO.skillReserve
+    heightRemaining = getRequiredLineWeights(content) - SPACE_INFO.skillReserve - SPACE_INFO.courseReserve
 
     if (heightRemaining <= 0):
         print("The required content takes up all the space!")
@@ -383,7 +514,7 @@ def rank(content: dict, jobPosting: str):
     heightRemaining -= keywordsHeight
     print(f"Height Remaining: {heightRemaining}")
     
-    heightRemaining += SPACE_INFO.skillReserve
+    heightRemaining += SPACE_INFO.skillReserve + SPACE_INFO.courseReserve
 
     skills, skillsHeight = pruneSkills(processedItems, similarities)
     print(f"Skills Height: {skillsHeight}")
@@ -391,4 +522,7 @@ def rank(content: dict, jobPosting: str):
     heightRemaining -= skillsHeight
     print(f"Remaining Height: {heightRemaining}")
 
-    return points, keywords, skills, jobs, sections
+    courses, coursesHeight = pruneCourses(processedItems, similarities)
+    heightRemaining -= coursesHeight
+
+    return filter(content, skills, courses, points, keywords, jobs, sections)

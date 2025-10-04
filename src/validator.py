@@ -1,4 +1,3 @@
-# AI GENERATED
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 import yaml
@@ -121,20 +120,6 @@ def load_and_validate_yaml(yaml_path: str) -> Optional[ResumeData]:
                 print(f"   Field '{location}': {error['msg']}")
         return None
 
-def validate_yaml_structure(yaml_path: str) -> bool:
-    """
-    Quick validation check that returns True/False.
-    
-    Args:
-        yaml_path: Path to the YAML file
-        
-    Returns:
-        True if valid, False otherwise
-    """
-    result = load_and_validate_yaml(yaml_path)
-    return result is not None
-
-    
 def validate(path: str) -> ResumeData | None:
     resume_data = load_and_validate_yaml(path)
     return resume_data

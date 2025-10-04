@@ -189,11 +189,17 @@ class LineGenerator:
         honorsList = self.combine(education['honors'], ', ')
         lines.append(LineSpec(text=f"Honors: {honorsList}", size=FontSize.REGULAR, isRequired=True, lineType="education"))
         
-        courseList = self.combine(education['courses'], ', ')
-        lines.append(LineSpec(text=f"Relevant Courses: {courseList}", size=FontSize.REGULAR, isRequired=True, lineType="education"))
-        
         return lines
-    
+
+    def generateCoursesLine(self, courses: List[str]) -> LineSpec:
+             coursesText = self.combine(courses, ', ')
+             return LineSpec(
+                 text=f"Relevant Courses: {coursesText}",
+                 size=FontSize.REGULAR,
+                 isRequired=False,
+                 lineType="courses"
+             )
+
     def calculateHeight(self, lineSpec: LineSpec) -> int:
         return self.fontMetrics.getHeight(lineSpec.text, lineSpec.size)
     

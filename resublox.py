@@ -35,23 +35,8 @@ if __name__ == '__main__':
 
     # HACK: Not built to work with Pydantic Model right now. Only dicts
     content = resumeContent.model_dump()
-    points, keywords, skills, usedJobs, usedSections = ranker.rank(content, target)
-
-    jobs = content['experience']['jobs']
-    jobs[:] = [jobs[i] for i in sorted(usedJobs)]
-
-    # OPTIMIZE: There's gotta be a better way.
-    for i, job in enumerate(jobs):
-        sections = job['sections']
-        jobPoints = [p for p in points if p.metadata['jobIndex'] == i]
-        jobKeywords = [k for k in keywords if k.metadata['jobIndex'] == i]
-        for j, section in enumerate(sections):
-            sectionIndices = [jp.metadata['pointIndex'] for jp in jobPoints if jp.metadata['sectionIndex'] == j]
-            keywordIndices = [jk.metadata['keywordIndex'] for jk in jobKeywords if jk.metadata['sectionIndex'] == j]
-            section['points'][:] = [section['points'][k] for k in sorted(sectionIndices)]
-            section['keywords'][:] = [section['keywords'][l] for l in sorted(keywordIndices)]
-
-    content['skills']['list'][:] = [content['skills']['list'][m] for m in sorted([s.index for s in skills])]
     
-    formatter.output(content)
+    optimizedContent = ranker.rank(content, target)
+    
+    formatter.output(optimizedContent)
     

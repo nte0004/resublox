@@ -4,14 +4,8 @@ import tempfile
 import os
 import platform
 import subprocess
-from src.core import FontSize, Spacing, FONT, FontMetrics
-from src.lineGenerator import LineGenerator, LineSpec
-
-PAGE_WIDTH_INCHES = 8.5
-PAGE_HEIGHT_INCHES = 11
-MARGIN_INCHES = [1, 1, 1, 1]
-LINE_HEIGHT = 1.15
-MAX_PAGES = 1
+from src.core import FontMetrics, PAGE_WIDTH_INCHES, PAGE_HEIGHT_INCHES, MARGIN_INCHES, FONT
+from src.lineGenerator import LineGenerator
 
 FONT_METRICS = FontMetrics()
 LINE_GENERATOR = LineGenerator(FONT_METRICS)
@@ -44,7 +38,11 @@ def generateLines(content):
                 lines.append(LINE_GENERATOR.generateLinksLine(section['links'], jobIdx, sectionIdx))
     
     lines.extend(LINE_GENERATOR.generateEducationLines(content['education']))
-    
+
+    if 'courses' in content['education'] and content['education']['courses']:
+            coursesLine = LINE_GENERATOR.generateCoursesLine(content['education']['courses'])
+            lines.append(coursesLine)
+        
     return lines
 
 def createDocx(lineSpecs):

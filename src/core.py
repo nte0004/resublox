@@ -108,7 +108,8 @@ class ItemType(Enum):
     SKILL = 0
     POINT = 1
     KEYWORD = 2
-    JOB_POSTING = 3
+    COURSE = 3
+    JOB_POSTING = 4
 
 @dataclass
 class ProcessedItem:
@@ -127,7 +128,8 @@ class SpaceInformation:
     keywordReserve: int = field(init = False)
     maxHeight: int = field(init = False)
     keywordLinesPerSection: int = 1
-    skillsLineCount: int = 1
+    skillsLineCount: int = 2
+    coursesLineCount: int = 1
 
     def __init__(self):
         # TODO: Have these be defined relative to some kind of YAML schema
@@ -135,5 +137,6 @@ class SpaceInformation:
         self.sectionOverhead = FontSize.SUBTITLE.height + Spacing.GAP_SMALL.height
         self.skillReserve = self.skillsLineCount * FontSize.REGULAR.height
         self.keywordReserve = self.keywordLinesPerSection * FontSize.REGULAR.height
+        self.courseReserve = self.coursesLineCount * FontSize.REGULAR.height
         self.maxHeight = (PAGE_HEIGHT - MARGIN[0] - MARGIN[2]) * MAX_PAGES
 
