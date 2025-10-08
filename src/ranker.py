@@ -196,6 +196,9 @@ def estimateLinksHeight(content: dict, jobIdx: int, sectionIdx: int) -> int:
 
 def prunePoints(content: dict, items: list[ProcessedItem], similarities: list[float], heightRemaining: int) -> tuple[list[ProcessedItem], int, set, set]:
     
+    MIN_POINTS_PER_SECTION = 3
+    BLACKLIST_WEIGHT = SPACE_INFO.maxHeight + 1
+
     def iterate(_capacity):
         if _capacity <= 0:
             return [False] * len(targetValues)
@@ -230,14 +233,32 @@ def prunePoints(content: dict, items: list[ProcessedItem], similarities: list[fl
         
         chosen = iterate(curCapacity)
 
-        distinctJobs, distinctSections = set(), set()
+        sectionPointIndices = {}
         for i, picked in enumerate(chosen):
             if picked:
                 item = targets[i]
-                jobIdx = item.metadata['jobIndex']
-                sectionIdx = item.metadata['sectionIndex']
-                distinctJobs.add(jobIdx)
-                distinctSections.add((jobIdx, sectionIdx))
+                sectionKey = (item.metadata['jobIndex'], item.metadata['sectionIndex'])
+                if sectionKey not in sectionPointIndices:
+                    sectionPointIndices[sectionKey] = []
+                sectionPointIndices[sectionKey].append(i)
+
+        sectionsToRemove = {
+            sectionKey for sectionKey, indices in sectionPointIndices.items()
+            if len(indices) < MIN_POINTS_PER_SECTION
+        }
+
+        if sectionsToRemove:
+            for sectionKey in sectionsToRemove:
+                for idx in sectionPointIndices[sectionKey]:
+                        chosen[idx] = False
+                        targetWeights[idx] = BLACKLIST_WEIGHT
+                del sectionPointIndices[sectionKey]
+
+        distinctJobs, distinctSections = set(), set()
+        for sectionKey in sectionPointIndices.keys():
+            jobIdx, sectionIdx = sectionKey
+            distinctJobs.add(jobIdx)
+            distinctSections.add((jobIdx, sectionIdx))
 
         newJobs = distinctJobs - accountedJobs
         removedJobs = accountedJobs - distinctJobs
@@ -267,7 +288,7 @@ def prunePoints(content: dict, items: list[ProcessedItem], similarities: list[fl
             removedOverhead += estimateLinksHeight(content, jobIdx, sectionIdx)
         
         netOverheadChange = newOverhead - removedOverhead
-        
+       
         if netOverheadChange == 0:
             break
         elif netOverheadChange > 0:
