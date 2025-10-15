@@ -131,8 +131,8 @@ def getRequiredLineWeights(content: dict) -> int:
 
 def encode(batch: list[str]):
     from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer(MODEL, device='cpu')
-    return model.encode(batch)
+    model = SentenceTransformer(MODEL)
+    return model.encode(batch, show_progress_bar=True)
 
 def analyze(processedItems: list[ProcessedItem], embeddings) -> list[float]:
     jobPostingItem = next(item for item in processedItems if item.itemType == ItemType.JOB_POSTING)
@@ -196,7 +196,6 @@ def estimateLinksHeight(content: dict, jobIdx: int, sectionIdx: int) -> int:
 
 def prunePoints(content: dict, items: list[ProcessedItem], similarities: list[float], heightRemaining: int) -> tuple[list[ProcessedItem], int, set, set]:
     
-    MIN_POINTS_PER_SECTION = 3
     BLACKLIST_WEIGHT = SPACE_INFO.maxHeight + 1
 
     def iterate(_capacity):
@@ -228,9 +227,6 @@ def prunePoints(content: dict, items: list[ProcessedItem], similarities: list[fl
     
     while iteration < maxIterations:
         iteration += 1
-        print(f'Iteration: {iteration}')
-        print(f'Capacity: {curCapacity}')
-        
         chosen = iterate(curCapacity)
 
         sectionPointIndices = {}
@@ -244,7 +240,7 @@ def prunePoints(content: dict, items: list[ProcessedItem], similarities: list[fl
 
         sectionsToRemove = {
             sectionKey for sectionKey, indices in sectionPointIndices.items()
-            if len(indices) < MIN_POINTS_PER_SECTION
+            if len(indices) < SPACE_INFO.minPointsPerSection
         }
 
         if sectionsToRemove:
@@ -345,6 +341,7 @@ def pruneKeywords(content: dict, items: list[ProcessedItem], similarities: list[
         
         dummyLine = LINE_GENERATOR.generateKeywordsLine(validationText, jobIdx, sectionIdx)
         maxWidth = FONT_METRICS.maxWidth
+        # TODO: Derive Technologies Used
         headerWidth = FONT_METRICS.getWidth("Technologies Used: ", FontSize.REGULAR)
         
         capacity = maxWidth * SPACE_INFO.keywordLinesPerSection - headerWidth - (len(sectionKeywords) - 1) * separatorWeight
@@ -413,6 +410,7 @@ def pruneCourses(items: list[ProcessedItem], similarities: list[float]) -> tuple
     courseValues = [similarities[c.index] for c in courses]
     courseWeights = [c.lineWidth for c in courses]
     
+    # TODO: Derive Relevant Courses better.
     headerWidth = FONT_METRICS.getWidth("Relevant Courses: ", FontSize.REGULAR)
     capacity = constWeight - headerWidth - (len(courses) - 1) * separatorWeight
     
@@ -527,21 +525,15 @@ def rank(content: dict, jobPosting: str):
     points, pointsSpace, jobs, sections = prunePoints(content, processedItems, similarities, heightRemaining)
     heightRemaining -= pointsSpace
     
-    print(f"Height Remaining Inches: {heightRemaining}")
-
     keywords, keywordsHeight = pruneKeywords(content, processedItems, similarities, sections)
-    print(f"Keyword Height: {keywordsHeight}")
 
     heightRemaining -= keywordsHeight
-    print(f"Height Remaining: {heightRemaining}")
     
     heightRemaining += SPACE_INFO.skillReserve + SPACE_INFO.courseReserve
 
     skills, skillsHeight = pruneSkills(processedItems, similarities)
-    print(f"Skills Height: {skillsHeight}")
     
     heightRemaining -= skillsHeight
-    print(f"Remaining Height: {heightRemaining}")
 
     courses, coursesHeight = pruneCourses(processedItems, similarities)
     heightRemaining -= coursesHeight

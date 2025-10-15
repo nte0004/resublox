@@ -102,18 +102,16 @@ def load_and_validate_yaml(yaml_path: str) -> Optional[ResumeData]:
         
         # Validate the data structure
         validated_data = ResumeData(**raw_data)
-        print("✅ YAML validation successful!")
         return validated_data
         
     except FileNotFoundError as e:
-        print(f"❌ File Error: {e}")
+        print(f"File Error: {e}")
         return None
     except yaml.YAMLError as e:
-        print(f"❌ YAML Parsing Error: {e}")
+        print(f"YAML Parsing Error: {e}")
         return None
     except Exception as e:
-        print(f"❌ Validation Error: {e}")
-        # For debugging, you can also print the detailed error:
+        print(f"Validation Error: {e}")
         if hasattr(e, 'errors'):
             for error in e.errors():
                 location = " -> ".join(str(loc) for loc in error['loc'])

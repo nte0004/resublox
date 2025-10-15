@@ -4,6 +4,45 @@ from enum import Enum
 import math
 from typing import Dict, Any
 
+# CONFIG
+
+# Page Dimensions
+PAGE_WIDTH_INCHES = 8.5
+PAGE_HEIGHT_INCHES = 11
+
+# [top, right, bottom, left]
+MARGIN_INCHES = [1, 1, 1, 1]
+
+LINE_HEIGHT = 1.15
+
+MAX_PAGES = 1
+
+# Font Sizes (Pts)
+FONT_SIZE_NAME = 13
+FONT_SIZE_TITLE = 12
+FONT_SIZE_SUBTITLE = 11
+FONT_SIZE_REGULAR = 10
+
+# Gaps (Pts)
+SPACING_GAP = 6
+SPACING_GAP_SMALL = 3
+
+MIN_POINTS_PER_SECTION = 3      # Minimum number of points per section
+SKILLS_LINE_COUNT = 2           # Number of lines to reserve for skills
+COURSES_LINE_COUNT = 1          # Number of lines to reserve for courses
+KEYWORD_LINES_PER_SECTION = 1
+
+# Model Paths
+# - larger the model, the longer the runtime.
+# - modelHelper.py can be used to get different models.
+MODEL_SMALL = './models/all-MiniLM-L6-v2'
+MODEL_MEDIUM = './models/all-MiniLM-L12-v2'
+MODEL_LARGE = './models/all-mpnet-base-v2'
+
+# CHANGE FONT BELOW
+
+# END CONFIG
+
 @dataclass
 class FontInfo:
     name: str
@@ -15,7 +54,7 @@ class FontInfo:
 class Fonts:
     # Values found with fontHelper.py
     ARIAL = FontInfo(
-        name = 'arial',
+        name = 'arial', # This should be the name of the font recognized by python-docx
         path = 'fonts/arial/arial.ttf',
         unitsPerEm = 2048,
         fontHeightUnits = 2355,
@@ -23,8 +62,13 @@ class Fonts:
     )
 
 FONT = Fonts.ARIAL
-LINE_HEIGHT = 1.15
+
+# Precision of text measurements
 SCALE_FACTOR = 1000
+
+PAGE_WIDTH = int(PAGE_WIDTH_INCHES * SCALE_FACTOR)
+PAGE_HEIGHT = int(PAGE_HEIGHT_INCHES * SCALE_FACTOR)
+MARGIN = [int(m * SCALE_FACTOR) for m in MARGIN_INCHES]
 
 @dataclass
 class SizeInfo:
@@ -40,30 +84,21 @@ class SizeInfo:
 
 
 class FontSize:
-    NAME = SizeInfo(13)
-    REGULAR = SizeInfo(10)
-    TITLE = SizeInfo(12)
-    SUBTITLE = SizeInfo(11)
+    NAME = SizeInfo(FONT_SIZE_NAME)
+    REGULAR = SizeInfo(FONT_SIZE_REGULAR)
+    TITLE = SizeInfo(FONT_SIZE_TITLE)
+    SUBTITLE = SizeInfo(FONT_SIZE_SUBTITLE)
 
 class Spacing:
-    GAP = SizeInfo(6)
-    GAP_SMALL = SizeInfo(3)
+    GAP = SizeInfo(SPACING_GAP)
+    GAP_SMALL = SizeInfo(SPACING_GAP_SMALL)
 
 class Models:
-    SMALL = './models/all-MiniLM-L6-v2'
-    MEDIUM = './models/all-MiniLM-L12-v2'
-    LARGE = './models/all-mpnet-base-v2'
+    SMALL = MODEL_SMALL
+    MEDIUM = MODEL_MEDIUM
+    LARGE = MODEL_LARGE
 
-PAGE_WIDTH_INCHES = 8.5
-PAGE_WIDTH = int(PAGE_WIDTH_INCHES * SCALE_FACTOR)
 
-PAGE_HEIGHT_INCHES = 11
-PAGE_HEIGHT = int(PAGE_HEIGHT_INCHES * SCALE_FACTOR)
-
-MARGIN_INCHES = [1, 1, 1, 1]
-MARGIN = [int(m * SCALE_FACTOR) for m in MARGIN_INCHES]
-
-MAX_PAGES = 1
 
 class FontMetrics:
     def __init__(self):
@@ -94,8 +129,8 @@ class FontMetrics:
 
     def getHeight(self, text: str, size: SizeInfo) -> int:
         """ Returns the height a string will consume. """
-        if not text.strip():  # Empty or whitespace-only text
-            return int((size.size / 72) * SCALE_FACTOR)  # Just spacing
+        if not text.strip():
+            return int((size.size / 72) * SCALE_FACTOR)
             
         width = self.getWidth(text, size)
         lineCount = math.ceil(width / self.maxWidth)
@@ -127,9 +162,10 @@ class SpaceInformation:
     skillReserve: int = field(init = False)
     keywordReserve: int = field(init = False)
     maxHeight: int = field(init = False)
-    keywordLinesPerSection: int = 1
-    skillsLineCount: int = 2
-    coursesLineCount: int = 1
+    keywordLinesPerSection: int = KEYWORD_LINES_PER_SECTION
+    skillsLineCount: int = SKILLS_LINE_COUNT
+    coursesLineCount: int = COURSES_LINE_COUNT
+    minPointsPerSection: int = MIN_POINTS_PER_SECTION
 
     def __init__(self):
         # TODO: Have these be defined relative to some kind of YAML schema

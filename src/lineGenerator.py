@@ -78,7 +78,7 @@ class LineGenerator:
         else:
             lines.append(LineSpec(
                 text="",
-                size=Spacing.GAP,
+                size=Spacing.GAP_SMALL,
                 isRequired=False,
                 jobIndex=jobIndex,
                 lineType="gap"
@@ -87,13 +87,23 @@ class LineGenerator:
         fromDate = job.get('from', job.get('from_date', ''))
         toDate = job.get('to', job.get('to_date', ''))
         
-        lines.extend([
-            LineSpec(text=job['role'], size=FontSize.REGULAR, isRequired=False, jobIndex=jobIndex, lineType="jobHeader"),
-            LineSpec(text=job['company'], size=FontSize.REGULAR, isRequired=False, jobIndex=jobIndex, lineType="jobHeader"),
-            LineSpec(text=job['location'], size=FontSize.REGULAR, isRequired=False, jobIndex=jobIndex, lineType="jobHeader"),
-            LineSpec(text=self.combine([fromDate, toDate], ' — '), size=FontSize.REGULAR, isRequired=False, jobIndex=jobIndex, lineType="jobHeader"),
-            LineSpec(text="", size=Spacing.GAP_SMALL, isRequired=False, jobIndex=jobIndex, lineType="gap")
-        ])
+        lines.append(LineSpec(
+            text = f"{job['role']} at {job['company']}",
+            size = FontSize.SUBTITLE,
+            isRequired = False,
+            jobIndex = jobIndex,
+            lineType = 'jobHeader'
+        ))
+        
+        lines.append(LineSpec(
+            text = f"{fromDate} — {toDate}",
+            size = FontSize.REGULAR,
+            isRequired = False,
+            jobIndex = jobIndex,
+            lineType = 'jobHeader'
+        ))
+
+        lines.append(LineSpec(text="", size=Spacing.GAP_SMALL, isRequired=False, jobIndex=jobIndex, lineType="gap"))
         
         return lines
     
@@ -162,29 +172,23 @@ class LineGenerator:
         lines.append(LineSpec(text=education['title'], size=FontSize.TITLE, isRequired=True, lineType="header"))
         
         degree = f"{education['degree']} in {education['major']}"
-        lines.append(LineSpec(text=degree, size=FontSize.REGULAR, isRequired=True, lineType="education"))
-        
         conc = education.get('concentration', None)
         if conc:
-            lines.append(LineSpec(
-                text=f"Concentration in {conc}",
-                size=FontSize.REGULAR,
-                isRequired=True,
-                lineType="education"
-            ))
+            degree += f", Concentration in {conc}"
+
+        lines.append(LineSpec(text=degree, size=FontSize.REGULAR, isRequired=True, lineType="education"))
         
-        school = f"{education['school']}, {education['location']}"
-        lines.append(LineSpec(text=school, size=FontSize.REGULAR, isRequired=True, lineType="education"))
         
         grad = education.get('graduation', None)
         if grad:
             if grad['hasGraduated']:
                 gradLine = f"Graduated: {grad['on']}"
             else:
-                gradLine = f"Expected Graduation: {grad['on']}"
-            lines.append(LineSpec(text=gradLine, size=FontSize.REGULAR, isRequired=True, lineType="education"))
-        
-        lines.append(LineSpec(text=f"GPA: {education['gpa']}", size=FontSize.REGULAR, isRequired=True, lineType="education"))
+                gradLine = f"Expected: {grad['on']}"
+
+        school = f"{education['school']}, {education['location']} | {gradLine} | GPA: {education['gpa']}"
+
+        lines.append(LineSpec(text=school, size=FontSize.REGULAR, isRequired=True, lineType="education"))
         
         honorsList = self.combine(education['honors'], ', ')
         lines.append(LineSpec(text=f"Honors: {honorsList}", size=FontSize.REGULAR, isRequired=True, lineType="education"))
