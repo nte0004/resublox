@@ -73,11 +73,7 @@ def createDocx(lineSpecs):
 
     return doc
 
-def docxToPdf(doc):
-    with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as tmpFile:
-        doc.save(tmpFile.name)
-        tempPath = tmpFile.name
-
+def docxToPdf(tempPath):
     system = platform.system()
     if system == "Darwin":
         LIBREOFFICE_PATH='/Applications/LibreOffice.app/Contents/MacOS/soffice'
@@ -92,14 +88,18 @@ def docxToPdf(doc):
         '--outdir', os.path.dirname(tempPath), tempPath
     ])
 
-    return tempPath
-
-def openPdf(path):
-    pdfPath = path.replace('.docx', '.pdf')
-    subprocess.run(['open', pdfPath])
-
-def output(content):
+def output(content, editableFlag = False):
     lineSpecs = generateLines(content)
     doc = createDocx(lineSpecs)
-    path = docxToPdf(doc)
-    openPdf(path)
+
+    with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as tmpFile:
+        doc.save(tmpFile.name)
+        tempPath = tmpFile.name
+    
+    if (editableFlag):
+        # Just open as docx, allows by-hand changes
+        subprocess.run(['open', tempPath])
+    else:
+        docxToPdf(tempPath)
+        pdfPath = tempPath.replace('.docx', '.pdf')
+        subprocess.run(['open', pdfPath])

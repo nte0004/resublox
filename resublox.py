@@ -14,6 +14,7 @@ if __name__ == '__main__':
 
     parser.add_argument("resume", help="Path to your resume template. See template.example.yaml")
     parser.add_argument("target", help="The content for which the resume will be optimized (in quotes \"like this\").")
+    parser.add_argument("-e", "--editable", action='store_true', help="Instead of outputting a pdf, outputs a docx.")
 
     args = parser.parse_args()
 
@@ -38,5 +39,5 @@ if __name__ == '__main__':
     
     optimizedContent = ranker.rank(content, target)
     
-    formatter.output(optimizedContent)
+    formatter.output(optimizedContent, args.editable)
     
