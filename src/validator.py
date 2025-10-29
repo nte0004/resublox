@@ -7,14 +7,14 @@ class Contact(BaseModel):
     name: str = Field(..., min_length=1, description="Full name")
     email: str = Field(..., min_length=1, description="Email address")
     phone: str = Field(..., min_length=1, description="Phone number")
-    location: str = Field(..., min_length=1, description="Location")
-    github: str = Field(..., min_length=1, description="GitHub profile")
-    website: str = Field(..., min_length=1, description="Personal website")
-    linkedin: Optional[str] = Field(None, description="LinkedIn profile")
+    location: Optional[str] = Field(None, min_length=1, description="Optional, Location")
+    github: Optional[str] = Field(None, min_length=1, description="Optional, GitHub profile")
+    website: Optional[str] = Field(None, min_length=1, description="Optional, Personal website")
+    linkedin: Optional[str] = Field(None, min_length=1,description="Optional, LinkedIn profile")
 
 class Skills(BaseModel):
     title: str = Field(..., min_length=1, description="Skills section title")
-    list: List[str] = Field(..., min_items=1, description="List of technical skills")
+    list: List[str] = Field(..., min_items=1, description="List of technical :nohskills")
     
     @field_validator('list')
     @classmethod
@@ -31,7 +31,7 @@ class Section(BaseModel):
     title: str = Field(..., min_length=1, description="Section title")
     keywords: List[str] = Field(..., min_items=1, description="Technology keywords")
     points: List[str] = Field(..., min_items=1, description="Achievement/responsibility points")
-    links: Optional[List[Link]] = Field(None, description="Optional project links")
+    links: Optional[List[Link]] = Field(None, description="Optional, project links")
     
     @field_validator('keywords', 'points')
     @classmethod
@@ -42,7 +42,7 @@ class Section(BaseModel):
 
 class Job(BaseModel):
     role: str = Field(..., min_length=1, description="Job title/role")
-    company: str = Field(..., min_length=1, description="Company name")
+    company: Optional[str] = Field(None, min_length=1, description="Optional, Company name")
     location: str = Field(..., min_length=1, description="Job location")
     from_date: str = Field(..., alias='from', description="Start date")
     to_date: str = Field(..., alias='to', description="End date")
@@ -62,9 +62,9 @@ class Education(BaseModel):
     location: str = Field(..., min_length=1, description="School location")
     degree: str = Field(..., min_length=1, description="Degree type")
     major: str = Field(..., min_length=1, description="Major field of study")
-    concentration: Optional[str] = Field(None, description="Optional concentration")
+    concentration: Optional[str] = Field(None, min_length=1, description="Optional, concentration")
     graduation: Graduation = Field(..., description="Graduation information")
-    gpa: str = Field(..., description="GPA")
+    gpa: Optional[str] = Field(None, min_length=1, description="Optional, GPA")
     honors: List[str] = Field(default_factory=list, description="Academic honors")
     courses: List[str] = Field(default_factory=list, description="Relevant courses")
 

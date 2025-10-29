@@ -29,18 +29,30 @@ class LineGenerator:
             isRequired=True,
             lineType="header"
         ))
+        text = f"Email: {contact['email']} | Phone: {contact['phone']}"
+        if contact['location'] is not None:
+            text += f" | {contact['location']}"
+
         lines.append(LineSpec(
-            text=f"Email: {contact['email']} | Phone: {contact['phone']} | {contact['location']}",
+            text=text,
             size=FontSize.REGULAR,
             isRequired=True,
             lineType="contact"
         ))
-        lines.append(LineSpec(
-            text=f"Github: {contact['github']} | Website: {contact['website']}",
-            size=FontSize.REGULAR,
-            isRequired=True,
-            lineType="contact"
-        ))
+            
+        text = ""
+        if contact['github'] is not None:
+            text += f"Github: {contact['github']}"
+        if contact['website'] is not None:
+            text += f" | Website: {contact['website']}"
+
+        if text:
+            lines.append(LineSpec(
+                text=text,
+                size=FontSize.REGULAR,
+                isRequired=True,
+                lineType="contact"
+            ))
         return lines
     
     def generateSkillsHeader(self, skills: dict) -> List[LineSpec]:
@@ -87,8 +99,13 @@ class LineGenerator:
         fromDate = job.get('from', job.get('from_date', ''))
         toDate = job.get('to', job.get('to_date', ''))
         
+        
+        text = f"{job['role']}"
+        if job['company'] is not None:
+            text += f" at {job['company']}"
+
         lines.append(LineSpec(
-            text = f"{job['role']} at {job['company']}",
+            text=text,
             size = FontSize.SUBTITLE,
             isRequired = False,
             jobIndex = jobIndex,
@@ -185,13 +202,21 @@ class LineGenerator:
                 gradLine = f"Graduated: {grad['on']}"
             else:
                 gradLine = f"Expected: {grad['on']}"
+        else:
+            gradLine = None
 
-        school = f"{education['school']}, {education['location']} | {gradLine} | GPA: {education['gpa']}"
+        school = f"{education['school']}, {education['location']}"
+        if gradLine is not None:
+            school += f" | {gradLine}"
+
+        if education['gpa'] is not None:
+            school += f" | GPA: {education['gpa']}"
 
         lines.append(LineSpec(text=school, size=FontSize.REGULAR, isRequired=True, lineType="education"))
         
-        honorsList = self.combine(education['honors'], ', ')
-        lines.append(LineSpec(text=f"Honors: {honorsList}", size=FontSize.REGULAR, isRequired=True, lineType="education"))
+        if len(education['honors']) > 0:
+            honorsList = self.combine(education['honors'], ', ')
+            lines.append(LineSpec(text=f"Honors: {honorsList}", size=FontSize.REGULAR, isRequired=True, lineType="education"))
         
         return lines
 
