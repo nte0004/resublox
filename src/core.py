@@ -31,6 +31,7 @@ MIN_POINTS_PER_SECTION = 3      # Minimum number of points per section
 SKILLS_LINE_COUNT = 2           # Number of lines to reserve for skills
 COURSES_LINE_COUNT = 1          # Number of lines to reserve for courses
 KEYWORD_LINES_PER_SECTION = 1
+PROJECT_TO_EXPERIENCE_RATIO = 0.85  # Project points are 15% less valuable than Experience points
 
 # Model Paths
 # - larger the model, the longer the runtime.
@@ -144,7 +145,8 @@ class ItemType(Enum):
     POINT = 1
     KEYWORD = 2
     COURSE = 3
-    JOB_POSTING = 4
+    PROJECT_POINT = 4
+    JOB_POSTING = 5
 
 @dataclass
 class ProcessedItem:
@@ -159,6 +161,7 @@ class ProcessedItem:
 class SpaceInformation:
     jobOverhead: int = field(init = False)
     sectionOverhead: int = field(init = False)
+    projectOverhead: int = field(init = False)
     skillReserve: int = field(init = False)
     keywordReserve: int = field(init = False)
     maxHeight: int = field(init = False)
@@ -166,13 +169,14 @@ class SpaceInformation:
     skillsLineCount: int = SKILLS_LINE_COUNT
     coursesLineCount: int = COURSES_LINE_COUNT
     minPointsPerSection: int = MIN_POINTS_PER_SECTION
+    projectToExperienceRatio: float = PROJECT_TO_EXPERIENCE_RATIO
 
     def __init__(self):
         # TODO: Have these be defined relative to some kind of YAML schema
-        self.jobOverhead = (4 * FontSize.REGULAR.height) + Spacing.GAP_SMALL.height + Spacing.GAP.height
+        self.jobOverhead = FontSize.SUBTITLE.height + FontSize.REGULAR.height + Spacing.GAP_SMALL.height + Spacing.GAP.height
         self.sectionOverhead = FontSize.SUBTITLE.height + Spacing.GAP_SMALL.height
+        self.projectOverhead = FontSize.SUBTITLE.height + Spacing.GAP_SMALL.height
         self.skillReserve = self.skillsLineCount * FontSize.REGULAR.height
         self.keywordReserve = self.keywordLinesPerSection * FontSize.REGULAR.height
         self.courseReserve = self.coursesLineCount * FontSize.REGULAR.height
         self.maxHeight = (PAGE_HEIGHT - MARGIN[0] - MARGIN[2]) * MAX_PAGES
-

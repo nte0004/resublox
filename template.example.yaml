@@ -1,33 +1,55 @@
+                                    # Items marked 'OPTIONAL' can be omitted entirely or set to 'null'
+
 contact:
   name: John Smith
-  email: "john.smith@email.com"
-  phone: "(555) 123-4567"
-  location: City, State
-  github: "https://github.com/username"
-  website: "https://yourwebsite.com"
-  linkedin: "https://linkedin.com/in/username"
+  contactInformation:               # OPTIONAL
+    - descriptor: Email
+      url: mailto:john.smith@example.com
+      alias: john.smith@example.com
+    
+    - descriptor: Phone
+      url: tel:5551234567
+      alias: (555) 123-4567
 
-skills:
+  location: City, State             # OPTIONAL
+                                    # Location will be appended to the output of the above links if provided.
+  
+  links:                            # OPTIONAL, Add more links if you want.
+    - descriptor: GitHub
+      url: https://github.com/johndoe
+      alias: johndoe
+
+    - descriptor: Website
+      url: https://example.com      # When no alias provided and it looks like a weblink, the 'https://' part
+                                    # is cut off when displayed. So it will display as 'example.com'
+
+    - descriptor: LinkedIn
+      url: linkedin.com/in/john     # This also works, 'https://' prepended to url link if no protocol specified.
+                                    # it will still display as 'linkedin.com/in/john'
+
+skills:                             # Skills are selected by the model from this list.
   title: Technical Skills
   list: [Java, Python, React, Node.js, AWS, Docker, Kubernetes, PostgreSQL, MongoDB, REST APIs, GraphQL, Microservices, CI/CD, Agile, Test-Driven Development, Cloud Computing, DevOps, Machine Learning, Data Analysis]
 
-experience:
+experience:                         # Experiences are selected by the model too.
   title: Work Experience
   jobs:
       - role: Senior Software Engineer
-        company: Tech Company Inc.
+        company: Tech Company Inc.  # OPTIONAL
         location: City, State
         from: "01/2022"
         to: "Present"
         sections: 
           - title: E-commerce Platform Development
             keywords: [React, Node.js, PostgreSQL, AWS, Docker, Stripe API, Redis, GraphQL, Jest]
-            links:
+            links:                  # OPTIONAL
               - descriptor: Live Site
-                link: https://example-ecommerce.com
+                url: https://example.com
+                alias: Link
               - descriptor: Case Study
-                link: https://portfolio.com/ecommerce-project
-            points:
+                url: https://example.com
+                alias: Link
+            points:                 # Add as many points as you'd like, the best in relation to job posting will be maximized.
               - Developed scalable e-commerce platform serving 50,000+ daily active users
               - Implemented microservices architecture reducing system response time by 40%
               - Built real-time inventory management system preventing overselling across multiple channels
@@ -63,7 +85,7 @@ experience:
             - Implemented real-time notifications and messaging system
 
       - role: Software Developer
-        company: Startup Solutions LLC
+        company: Startup Solutions  # OPTIONAL
         location: City, State
         from: "06/2020"
         to: "12/2021"
@@ -77,16 +99,45 @@ experience:
               - Created analytics dashboard for tracking user engagement and app performance
               - Optimized app performance achieving 4.5+ star rating on app stores
 
+projects:                           # OPTIONAL
+  title: Projects
+  projects:
+    - title: AI-Powered Task Manager
+      keywords: [Python, TensorFlow, Flask, React, PostgreSQL, Docker]
+      links:                        # OPTIONAL
+        - descriptor: GitHub
+          url: https://github.com/nte0004/resublox
+          alias: Link
+        - descriptor: Demo
+          url: https://example.com
+          alias: Link
+      points:
+        - Built intelligent task prioritization system using machine learning algorithms
+        - Implemented natural language processing for automated task categorization
+        - Created responsive web interface with React and Material-UI
+        - Deployed containerized application on AWS with automated CI/CD pipeline
+        - Achieved 85% accuracy in task priority prediction based on user behavior patterns
+        - Designed RESTful API serving 1000+ requests per minute with 99% uptime
+    
+    - title: Real-Time Collaboration Tool
+      keywords: [WebSocket, Node.js, Express, MongoDB, Redis, Vue.js]
+      points:
+        - Developed real-time collaborative document editing platform
+        - Implemented operational transformation algorithm for conflict-free editing
+        - Built WebSocket server handling 500+ concurrent connections
+        - Created presence indicators showing active users and cursor positions
+        - Designed efficient data synchronization using Redis pub/sub
+
 education:
   title: Education
   school: State University
   location: City, State
   degree: Bachelor of Science
   major: Computer Science
-  concentration: Cybersecurity
+  concentration: Cybersecurity      # OPTIONAL
   graduation:
     "on": "May 2020"
     hasGraduated: true
-  gpa: "3.7/4.0"
+  gpa: "3.7/4.0"                    # OPTIONAL
   honors: [Magna Cum Laude, "Dean's List (Fall '19, Spring '20)"]
   courses: [Data Structures, Algorithms, Database Systems, Software Engineering, Web Development, Computer Networks]

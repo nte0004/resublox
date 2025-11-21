@@ -111,6 +111,43 @@ def makeBatch(content: dict, jobPosting: str) -> tuple[list[str], list[Processed
                 }
             ))
             rootIdx += 1
+    
+    # Add project points if projects exist
+    if 'projects' in content and content['projects'] is not None:
+        projects = content['projects']['projects']
+        for pIdx, proj in enumerate(projects):
+            for ppIdx, pp in enumerate(proj['points']):
+                lineSpec = LINE_GENERATOR.generateProjectPointLine(pp, pIdx, ppIdx)
+                lineHeight = LINE_GENERATOR.calculateHeight(lineSpec)
+                batchIn.append(pp)
+                processedItems.append(ProcessedItem(
+                    text = pp,
+                    index = rootIdx,
+                    lineHeight = lineHeight,
+                    lineWidth = 0,
+                    itemType = ItemType.PROJECT_POINT,
+                    metadata = {
+                        'projectIndex': pIdx,
+                        'pointIndex': ppIdx
+                    }
+                ))
+                rootIdx += 1
+            
+            for kIdx, k in enumerate(proj['keywords']):
+                lineWidth = FONT_METRICS.getWidth(k, FontSize.REGULAR)
+                batchIn.append(k)
+                processedItems.append(ProcessedItem(
+                    text = k,
+                    index = rootIdx,
+                    lineHeight = 0,
+                    lineWidth = lineWidth,
+                    itemType = ItemType.KEYWORD,
+                    metadata = {
+                        'projectIndex': pIdx,
+                        'keywordIndex': kIdx
+                    }
+                ))
+                rootIdx += 1
 
     batchIn.append(jobPosting)
     processedItems.append(ProcessedItem(
@@ -194,72 +231,132 @@ def estimateLinksHeight(content: dict, jobIdx: int, sectionIdx: int) -> int:
     dummyLine = LINE_GENERATOR.generateLinksLine(section['links'], jobIdx, sectionIdx)
     return LINE_GENERATOR.calculateHeight(dummyLine)
 
-def prunePoints(content: dict, items: list[ProcessedItem], similarities: list[float], heightRemaining: int) -> tuple[list[ProcessedItem], int, set, set]:
+def calculateProjectOverhead(content: dict, projectIndex: int) -> int:
+    project = content['projects']['projects'][projectIndex]
+    projectHeaderLines = LINE_GENERATOR.generateProjectHeader(project, projectIndex)
+    return LINE_GENERATOR.calculateTotalHeight(projectHeaderLines)
+
+def estimateProjectKeywordsHeight(content: dict, projectIdx: int) -> int:
+    project = content['projects']['projects'][projectIdx]
+    if 'keywords' not in project or not project['keywords']:
+        return 0
+    dummyLine = LINE_GENERATOR.generateProjectKeywordsLine(project['keywords'], projectIdx)
+    return LINE_GENERATOR.calculateHeight(dummyLine)
+
+def estimateProjectLinksHeight(content: dict, projectIdx: int) -> int:
+    project = content['projects']['projects'][projectIdx]
+    if 'links' not in project or not project['links']:
+        return 0
+    dummyLine = LINE_GENERATOR.generateProjectLinksLine(project['links'], projectIdx)
+    return LINE_GENERATOR.calculateHeight(dummyLine)
+
+def prunePoints(content: dict, items: list[ProcessedItem], similarities: list[float], heightRemaining: int) -> tuple[list[ProcessedItem], list[ProcessedItem], int, set, set, set]:
     
     BLACKLIST_WEIGHT = SPACE_INFO.maxHeight + 1
 
-    def iterate(_capacity):
+    def iterate(_capacity, _targetValues, _targetWeights):
         if _capacity <= 0:
-            return [False] * len(targetValues)
+            return [False] * len(_targetValues)
 
-        if all(tw == targetWeights[0] for tw in targetWeights):
-            maxItems = _capacity // targetWeights[0]
-            sortedTargets = sorted(range(len(targetValues)), key = lambda i: targetValues[i], reverse = True)
-            chosen = [False] * len(targetValues)
+        if all(tw == _targetWeights[0] for tw in _targetWeights):
+            maxItems = _capacity // _targetWeights[0]
+            sortedTargets = sorted(range(len(_targetValues)), key = lambda i: _targetValues[i], reverse = True)
+            chosen = [False] * len(_targetValues)
             for i in sortedTargets[:maxItems]:
                 chosen[i] = True
         else:
-            chosen = knapsack(targetValues, targetWeights, _capacity)
+            chosen = knapsack(_targetValues, _targetWeights, _capacity)
 
         return chosen
 
-    targets = [item for item in items if item.itemType == ItemType.POINT]
-    targetValues = [similarities[item.index] for item in targets]
-    targetWeights = [item.lineHeight for item in targets]
+    # Separate experience points and project points
+    expPoints = [item for item in items if item.itemType == ItemType.POINT]
+    projPoints = [item for item in items if item.itemType == ItemType.PROJECT_POINT]
+    
+    # Combine both types with weighted values for project points
+    allPoints = expPoints + projPoints
+    allValues = []
+    allWeights = []
+    
+    for item in expPoints:
+        allValues.append(similarities[item.index])
+        allWeights.append(item.lineHeight)
+    
+    for item in projPoints:
+        # Apply project weighting (85% as valuable as experience)
+        allValues.append(similarities[item.index] * SPACE_INFO.projectToExperienceRatio)
+        allWeights.append(item.lineHeight)
+    
     capacity = heightRemaining
-
     chosen = []
     accountedJobs = set()
     accountedSections = set()
+    accountedProjects = set()
     curCapacity = capacity
     iteration = 0
     maxIterations = 10 
     
     while iteration < maxIterations:
         iteration += 1
-        chosen = iterate(curCapacity)
+        chosen = iterate(curCapacity, allValues, allWeights)
 
         sectionPointIndices = {}
+        projectPointIndices = {}
+        
         for i, picked in enumerate(chosen):
             if picked:
-                item = targets[i]
-                sectionKey = (item.metadata['jobIndex'], item.metadata['sectionIndex'])
-                if sectionKey not in sectionPointIndices:
-                    sectionPointIndices[sectionKey] = []
-                sectionPointIndices[sectionKey].append(i)
+                item = allPoints[i]
+                if item.itemType == ItemType.POINT:
+                    sectionKey = (item.metadata['jobIndex'], item.metadata['sectionIndex'])
+                    if sectionKey not in sectionPointIndices:
+                        sectionPointIndices[sectionKey] = []
+                    sectionPointIndices[sectionKey].append(i)
+                elif item.itemType == ItemType.PROJECT_POINT:
+                    projectIdx = item.metadata['projectIndex']
+                    if projectIdx not in projectPointIndices:
+                        projectPointIndices[projectIdx] = []
+                    projectPointIndices[projectIdx].append(i)
 
+        # Remove sections with too few points
         sectionsToRemove = {
             sectionKey for sectionKey, indices in sectionPointIndices.items()
+            if len(indices) < SPACE_INFO.minPointsPerSection
+        }
+        
+        # Remove projects with too few points
+        projectsToRemove = {
+            projectIdx for projectIdx, indices in projectPointIndices.items()
             if len(indices) < SPACE_INFO.minPointsPerSection
         }
 
         if sectionsToRemove:
             for sectionKey in sectionsToRemove:
                 for idx in sectionPointIndices[sectionKey]:
-                        chosen[idx] = False
-                        targetWeights[idx] = BLACKLIST_WEIGHT
+                    chosen[idx] = False
+                    allWeights[idx] = BLACKLIST_WEIGHT
                 del sectionPointIndices[sectionKey]
+        
+        if projectsToRemove:
+            for projectIdx in projectsToRemove:
+                for idx in projectPointIndices[projectIdx]:
+                    chosen[idx] = False
+                    allWeights[idx] = BLACKLIST_WEIGHT
+                del projectPointIndices[projectIdx]
 
         distinctJobs, distinctSections = set(), set()
         for sectionKey in sectionPointIndices.keys():
             jobIdx, sectionIdx = sectionKey
             distinctJobs.add(jobIdx)
             distinctSections.add((jobIdx, sectionIdx))
+        
+        distinctProjects = set(projectPointIndices.keys())
 
         newJobs = distinctJobs - accountedJobs
         removedJobs = accountedJobs - distinctJobs
         newSections = distinctSections - accountedSections
         removedSections = accountedSections - distinctSections
+        newProjects = distinctProjects - accountedProjects
+        removedProjects = accountedProjects - distinctProjects
 
         newOverhead = 0
         for jobIdx in newJobs:
@@ -272,6 +369,13 @@ def prunePoints(content: dict, items: list[ProcessedItem], similarities: list[fl
             newOverhead += estimateKeywordsHeight(content, jobIdx, sectionIdx)
             newOverhead += estimateLinksHeight(content, jobIdx, sectionIdx)
         
+        # Add project overhead
+        if 'projects' in content and content['projects'] is not None:
+            for projectIdx in newProjects:
+                newOverhead += calculateProjectOverhead(content, projectIdx)
+                newOverhead += estimateProjectKeywordsHeight(content, projectIdx)
+                newOverhead += estimateProjectLinksHeight(content, projectIdx)
+        
         removedOverhead = 0
         for jobIdx in removedJobs:
             removedOverhead += calculateJobOverhead(content, jobIdx)
@@ -283,6 +387,13 @@ def prunePoints(content: dict, items: list[ProcessedItem], similarities: list[fl
             removedOverhead += estimateKeywordsHeight(content, jobIdx, sectionIdx)
             removedOverhead += estimateLinksHeight(content, jobIdx, sectionIdx)
         
+        # Remove project overhead
+        if 'projects' in content and content['projects'] is not None:
+            for projectIdx in removedProjects:
+                removedOverhead += calculateProjectOverhead(content, projectIdx)
+                removedOverhead += estimateProjectKeywordsHeight(content, projectIdx)
+                removedOverhead += estimateProjectLinksHeight(content, projectIdx)
+        
         netOverheadChange = newOverhead - removedOverhead
        
         if netOverheadChange == 0:
@@ -290,20 +401,29 @@ def prunePoints(content: dict, items: list[ProcessedItem], similarities: list[fl
         elif netOverheadChange > 0:
             curCapacity -= netOverheadChange
             if curCapacity <= 0:
-                chosen = [False] * len(items)
-                distinctJobs, distinctSections = set(), set()
+                chosen = [False] * len(allPoints)
+                distinctJobs, distinctSections, distinctProjects = set(), set(), set()
                 break
         else:
             curCapacity -= netOverheadChange
         
         accountedJobs = distinctJobs.copy()
         accountedSections = distinctSections.copy()
+        accountedProjects = distinctProjects.copy()
 
         if abs(netOverheadChange) <= 1:
             break
 
-    keepers = [targets[i] for i, picked in enumerate(chosen) if picked]
-    keepersHeight = sum([k.lineHeight for k in keepers])
+    expKeepers = []
+    projKeepers = []
+    for i, picked in enumerate(chosen):
+        if picked:
+            if allPoints[i].itemType == ItemType.POINT:
+                expKeepers.append(allPoints[i])
+            elif allPoints[i].itemType == ItemType.PROJECT_POINT:
+                projKeepers.append(allPoints[i])
+    
+    keepersHeight = sum([k.lineHeight for k in expKeepers]) + sum([k.lineHeight for k in projKeepers])
     
     keepersOverheadHeight = 0
     for jobIdx in accountedJobs:
@@ -314,11 +434,15 @@ def prunePoints(content: dict, items: list[ProcessedItem], similarities: list[fl
         isFirstInJob = sectionIdx == min(jobSections)
         keepersOverheadHeight += calculateSectionOverhead(content, jobIdx, sectionIdx, isFirstInJob)
     
+    if 'projects' in content and content['projects'] is not None:
+        for projectIdx in accountedProjects:
+            keepersOverheadHeight += calculateProjectOverhead(content, projectIdx)
+    
     usedSpace = keepersHeight + keepersOverheadHeight
 
-    return keepers, usedSpace, accountedJobs, accountedSections
+    return expKeepers, projKeepers, usedSpace, accountedJobs, accountedSections, accountedProjects
 
-def pruneKeywords(content: dict, items: list[ProcessedItem], similarities: list[float], sections: set) -> tuple[list[ProcessedItem], int]:
+def pruneKeywords(content: dict, items: list[ProcessedItem], similarities: list[float], sections: set, projects: set) -> tuple[list[ProcessedItem], int]:
     keywords = [item for item in items if item.itemType == ItemType.KEYWORD]
     if not keywords:
         return [], 0
@@ -329,8 +453,9 @@ def pruneKeywords(content: dict, items: list[ProcessedItem], similarities: list[
     keepers = []
     keepersHeight = 0
     
+    # Process section keywords (for experience)
     for jobIdx, sectionIdx in sections:
-        sectionKeywords = [k for k in keywords if k.metadata['jobIndex'] == jobIdx and k.metadata['sectionIndex'] == sectionIdx]
+        sectionKeywords = [k for k in keywords if 'jobIndex' in k.metadata and k.metadata['jobIndex'] == jobIdx and k.metadata['sectionIndex'] == sectionIdx]
         if not sectionKeywords:
             continue
             
@@ -341,7 +466,7 @@ def pruneKeywords(content: dict, items: list[ProcessedItem], similarities: list[
         
         dummyLine = LINE_GENERATOR.generateKeywordsLine(validationText, jobIdx, sectionIdx)
         maxWidth = FONT_METRICS.maxWidth
-        # TODO: Derive Technologies Used
+        # TODO: Let Technologies used be a descriptor decided by the user in the template or core.py
         headerWidth = FONT_METRICS.getWidth("Technologies Used: ", FontSize.REGULAR)
         
         capacity = maxWidth * SPACE_INFO.keywordLinesPerSection - headerWidth - (len(sectionKeywords) - 1) * separatorWeight
@@ -359,6 +484,38 @@ def pruneKeywords(content: dict, items: list[ProcessedItem], similarities: list[
         
         if keepersText:
             finalLine = LINE_GENERATOR.generateKeywordsLine(keepersText, jobIdx, sectionIdx)
+            keepersHeight += LINE_GENERATOR.calculateHeight(finalLine)
+    
+    # Process project keywords
+    for projectIdx in projects:
+        projectKeywords = [k for k in keywords if 'projectIndex' in k.metadata and k.metadata['projectIndex'] == projectIdx]
+        if not projectKeywords:
+            continue
+            
+        validationText = [k.text for k in projectKeywords]
+        
+        pkValues = [similarities[pk.index] for pk in projectKeywords]
+        pkWeights = [pk.lineWidth for pk in projectKeywords]
+        
+        dummyLine = LINE_GENERATOR.generateProjectKeywordsLine(validationText, projectIdx)
+        maxWidth = FONT_METRICS.maxWidth
+        headerWidth = FONT_METRICS.getWidth("Technologies Used: ", FontSize.REGULAR)
+        
+        capacity = maxWidth * SPACE_INFO.keywordLinesPerSection - headerWidth - (len(projectKeywords) - 1) * separatorWeight
+        
+        if capacity <= 0:
+            continue
+
+        chosen = knapsack(pkValues, pkWeights, capacity)
+
+        keepersText = []
+        for i, picked in enumerate(chosen):
+            if picked:
+                keepers.append(projectKeywords[i])
+                keepersText.append(validationText[i])
+        
+        if keepersText:
+            finalLine = LINE_GENERATOR.generateProjectKeywordsLine(keepersText, projectIdx)
             keepersHeight += LINE_GENERATOR.calculateHeight(finalLine)
 
     return keepers, keepersHeight
@@ -433,8 +590,13 @@ def pruneCourses(items: list[ProcessedItem], similarities: list[float]) -> tuple
     return keepers, keepersHeight
 
 def filter(content: dict, skills: list[ProcessedItem], courses: list[ProcessedItem],
-           points: list[ProcessedItem], keywords: list[ProcessedItem],
-           jobs: set, sections: set) -> dict:
+           expPoints: list[ProcessedItem], projPoints: list[ProcessedItem], keywords: list[ProcessedItem],
+           jobs: set, sections: set, projects: set) -> dict:
+
+    '''
+        Boils the dictionary (that was produced by the template) down to only the content that should be rendered.
+    '''
+
 
     filteredContent = {
         'contact': content['contact'],
@@ -478,7 +640,7 @@ def filter(content: dict, skills: list[ProcessedItem], courses: list[ProcessedIt
             
             # Get points for this section
             sectionPoints = [
-                p for p in points 
+                p for p in expPoints 
                 if p.metadata['jobIndex'] == oldJobIdx 
                 and p.metadata['sectionIndex'] == oldSectionIdx
             ]
@@ -487,7 +649,7 @@ def filter(content: dict, skills: list[ProcessedItem], courses: list[ProcessedIt
             # Get keywords for this section
             sectionKeywords = [
                 k for k in keywords
-                if k.metadata['jobIndex'] == oldJobIdx
+                if 'jobIndex' in k.metadata and k.metadata['jobIndex'] == oldJobIdx
                 and k.metadata['sectionIndex'] == oldSectionIdx
             ]
             keywordIndices = sorted([k.metadata['keywordIndex'] for k in sectionKeywords])
@@ -506,10 +668,48 @@ def filter(content: dict, skills: list[ProcessedItem], courses: list[ProcessedIt
         
         filteredContent['experience']['jobs'].append(filteredJob)
     
+    # Filter projects if they exist
+    if 'projects' in content and content['projects'] is not None and projects:
+        sortedProjectIndices = sorted(projects)
+        filteredContent['projects'] = {
+            'title': content['projects']['title'],
+            'projects': []
+        }
+        
+        for oldProjectIdx in sortedProjectIndices:
+            originalProject = content['projects']['projects'][oldProjectIdx]
+            
+            # Get points for this project
+            projectPoints = [
+                p for p in projPoints
+                if p.metadata['projectIndex'] == oldProjectIdx
+            ]
+            pointIndices = sorted([p.metadata['pointIndex'] for p in projectPoints])
+            
+            # Get keywords for this project
+            projectKeywords = [
+                k for k in keywords
+                if 'projectIndex' in k.metadata and k.metadata['projectIndex'] == oldProjectIdx
+            ]
+            keywordIndices = sorted([k.metadata['keywordIndex'] for k in projectKeywords])
+            
+            filteredProject = {
+                'title': originalProject['title'],
+                'keywords': [originalProject['keywords'][i] for i in keywordIndices],
+                'points': [originalProject['points'][i] for i in pointIndices]
+            }
+            
+            # Preserve links if they exist
+            if 'links' in originalProject and originalProject['links']:
+                filteredProject['links'] = originalProject['links']
+            
+            filteredContent['projects']['projects'].append(filteredProject)
+    
     return filteredContent
 
 
 def rank(content: dict, jobPosting: str):
+    # Height allotted to skills and courses is removed now, guranteeing space later.
     heightRemaining = getRequiredLineWeights(content) - SPACE_INFO.skillReserve - SPACE_INFO.courseReserve
 
     if (heightRemaining <= 0):
@@ -522,12 +722,14 @@ def rank(content: dict, jobPosting: str):
     embeddings = encode(batchIn)
     similarities = analyze(processedItems, embeddings)
 
-    points, pointsSpace, jobs, sections = prunePoints(content, processedItems, similarities, heightRemaining)
+    expPoints, projPoints, pointsSpace, jobs, sections, projects = prunePoints(content, processedItems, similarities, heightRemaining)
     heightRemaining -= pointsSpace
     
-    keywords, keywordsHeight = pruneKeywords(content, processedItems, similarities, sections)
+    keywords, keywordsHeight = pruneKeywords(content, processedItems, similarities, sections, projects)
 
     heightRemaining -= keywordsHeight
+    
+    # prunePoints and prunKeywords operate as if the skills and courses space if already filled.
     
     heightRemaining += SPACE_INFO.skillReserve + SPACE_INFO.courseReserve
 
@@ -538,4 +740,4 @@ def rank(content: dict, jobPosting: str):
     courses, coursesHeight = pruneCourses(processedItems, similarities)
     heightRemaining -= coursesHeight
 
-    return filter(content, skills, courses, points, keywords, jobs, sections)
+    return filter(content, skills, courses, expPoints, projPoints, keywords, jobs, sections, projects)
